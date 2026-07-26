@@ -15,13 +15,18 @@ function formatDuration(ms: number): string {
 
 /** Renders a live countdown to `targetIso`, and the local (Asia/Dhaka by
  * default, browser-local otherwise) wall-clock time. Never fabricates a
- * value: if targetIso is null, shows an explicit "Unknown" state. */
+ * value: if targetIso is null, shows an explicit "Unknown" state. If the
+ * underlying reading is stale, a past target is shown as a stale estimate
+ * rather than a confident "due now", since the real reset time may have
+ * already come and gone without us observing it. */
 export function CountdownTimer({
   targetIso,
   displayTimeZone,
+  isStale,
 }: {
   targetIso: string | null
   displayTimeZone?: string
+  isStale?: boolean
 }) {
   const [now, setNow] = useState(() => Date.now())
 
@@ -51,6 +56,15 @@ export function CountdownTimer({
     }).format(target)
   } catch {
     localTime = new Date(target).toLocaleString()
+  }
+
+  if (isStale && remaining <= 0) {
+    return (
+      <span title={localTime} data-testid="countdown-stale">
+        ~{localTime}{' '}
+        <span className="text-slate-500 dark:text-slate-400 text-xs">(stale estimate)</span>
+      </span>
+    )
   }
 
   return (

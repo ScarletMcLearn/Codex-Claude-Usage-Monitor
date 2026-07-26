@@ -14,4 +14,11 @@ describe('CountdownTimer', () => {
     const el = screen.getByTestId('countdown')
     expect(el.textContent).toMatch(/h/)
   })
+
+  it('shows a stale estimate instead of "due now" for a past target on stale data', () => {
+    const past = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    render(<CountdownTimer targetIso={past} displayTimeZone="Asia/Dhaka" isStale />)
+    const el = screen.getByTestId('countdown-stale')
+    expect(el.textContent).toMatch(/stale estimate/)
+  })
 })

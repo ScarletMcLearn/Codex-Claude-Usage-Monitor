@@ -84,7 +84,7 @@ export function ProfileCard({
                 label={limit.window_label}
               />
               <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                <span>Resets: <CountdownTimer targetIso={limit.resets_at_utc} displayTimeZone={displayTimeZone} /></span>
+                <span>Resets: <CountdownTimer targetIso={limit.resets_at_utc} displayTimeZone={displayTimeZone} isStale={limit.quality === 'stale'} /></span>
                 <StatusBadge quality={limit.quality} />
               </div>
             </div>
