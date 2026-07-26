@@ -15,8 +15,12 @@ platforms = ["win-64"]
 [tasks]
 # --- Backend (wraps uv) ---
 sync = { cmd = "uv sync --extra dev --extra notify", cwd = "backend" }
-serve = { cmd = "uv run uvicorn claude_codex_monitor.app:create_app --factory --host 127.0.0.1 --port 8787", cwd = "backend" }
-dev-backend = { cmd = "uv run uvicorn claude_codex_monitor.app:create_app --factory --host 127.0.0.1 --port 8787 --reload", cwd = "backend" }
+# CCM_PORT must already be set in the calling shell's environment before this
+# task runs (start-dashboard.ps1 always sets it, defaulting to 8787 via its
+# own -Port parameter default). Running `pixi run serve` directly without
+# CCM_PORT set will fail loudly rather than silently binding an unexpected port.
+serve = { cmd = "uv run uvicorn claude_codex_monitor.app:create_app --factory --host 127.0.0.1 --port $CCM_PORT", cwd = "backend" }
+dev-backend = { cmd = "uv run uvicorn claude_codex_monitor.app:create_app --factory --host 127.0.0.1 --port $CCM_PORT --reload", cwd = "backend" }
 test-backend = { cmd = "uv run pytest tests -q", cwd = "backend" }
 lint-backend = { cmd = "uv run ruff check src tests", cwd = "backend" }
 typecheck-backend = { cmd = "uv run pyright src", cwd = "backend" }
