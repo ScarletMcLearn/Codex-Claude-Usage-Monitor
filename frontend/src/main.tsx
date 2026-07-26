@@ -9,6 +9,9 @@ const queryClient = new QueryClient({
     queries: {
       retry: 1,
       staleTime: 10_000,
+      // Keep polling on refetchInterval queries even when this tab is in the
+      // background - this dashboard is meant to be left open unattended.
+      refetchIntervalInBackground: true,
     },
   },
 })
