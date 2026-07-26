@@ -90,13 +90,25 @@ pixi.toml/pixi.lock/.pixi REMOVED per toolchain change.
 None. Backend phase fully green.
 
 ## Decisions and assumptions
-- TOOLCHAIN (per mid-build user instruction): Python env/deps via `uv`
-  (uv venv + uv pip install -e, backend/pyproject.toml + backend/uv.lock),
-  NOT pixi. pixi.toml/pixi.lock/.pixi.toml removed from repo root. Frontend
-  will use pnpm exclusively (not npm/yarn). start-dashboard.ps1 (not yet
-  written) must validate `uv` and `pnpm` on PATH and use `uv run uvicorn ...`
-  + `pnpm install`/`pnpm build`, per the coordinator's explicit instruction.
-  README must document uv+pnpm, not pixi.
+- TOOLCHAIN (revised twice mid-build, this is the FINAL state - pixi.toml is
+  back, but only as a thin orchestrator):
+  - pixi.toml (repo root, recreated) defines `[tasks]` only, no `[dependencies]`
+    beyond the bare project/workspace metadata pixi itself requires. Every task
+    shells out to either `uv` (backend/pyproject.toml + backend/uv.lock is the
+    actual Python env/dependency source of truth - NOT pixi's conda env) or
+    `pnpm` (frontend/package.json). Example: `sync` -> `uv sync --extra dev
+    --extra notify` (cwd backend), `serve` -> `uv run uvicorn ... --host
+    127.0.0.1 --port 8787` (cwd backend), `build-frontend` -> `pnpm build`
+    (cwd frontend).
+  - End users / start-dashboard.ps1 run `pixi run <task>` ONLY - never invoke
+    `uv` or `pnpm` binaries directly themselves. start-dashboard.ps1 must
+    still validate `pixi`, `uv`, and `pnpm` are all on PATH (pixi needs uv+pnpm
+    available to shell out to), then drive everything via `pixi run ...`.
+  - README must document `pixi run <task>` as the user-facing commands, and
+    mention uv/pnpm as the underlying tools pixi wraps (not primary commands).
+  - Verified working: `pixi run test-backend` successfully wraps
+    `uv run pytest tests -q` from backend/ and produces the same 54-passed
+    result as running uv directly.
 - Claude adapter reads the sibling claude-usage-notifier's real DB read-only
   (plus narrow reset_confirmed write-back capability, not yet wired into a
   call site - state_reader.mark_reset_confirmed_seen exists but unused so far;
@@ -109,35 +121,62 @@ None. Backend phase fully green.
   UP042 (kept `class X(str, Enum)` over StrEnum for broad compat).
 
 ## Exact next steps
-1. Frontend scaffold: `pnpm create vite frontend -- --template react-ts` in
-   I:\Projects\Automation\ClaudeCodexMonitor\1\, then add Tailwind (dark mode
-   class strategy), Recharts, @tanstack/react-query.
-2. src/api/client.ts + src/types/usage.ts mirroring backend Pydantic models
-   (UsageLimit, ProfileStatus, Settings, ForecastResult, DiagnosticsRecord).
-3. Layout components (Header, SummaryCards), Provider section + ProfileCard +
-   UsageBar (Normal/Moderate/High/Critical/Exhausted/Unknown - text+icon+%,
-   not color alone), History panel + Recharts charts w/ reset-boundary
-   markers + range filters, Diagnostics drawer, common components
-   (StatusBadge, CountdownTimer, ThemeToggle, SkeletonCard, EmptyState).
-4. Hooks via React Query: useSummary/useProfiles/useHistory/useRefresh.
-   Vite dev proxy -> http://127.0.0.1:8787 for /api during `pnpm dev`.
-5. Settings UI + theme toggle wired to GET/PATCH /api/settings.
-6. Wire real refresh-all/per-profile refresh buttons, auto-refresh toggle.
-7. vitest unit tests (loading/empty/error states, ProfileCard, UsageBar,
-   history filters, theme switching, basic a11y) + Playwright e2e (needs
-   CLAUDE_CODEX_MONITOR_FAKE_ADAPTERS=1 env flag wired into app.py's adapter
-   construction so e2e never touches real ~/.claude or spawns codex.exe -
-   NOT YET IMPLEMENTED, must add a fake adapter pair + branch in
-   discovery_service/app.py construction before e2e tests can be written).
-8. start-dashboard.ps1: validate uv + pnpm on PATH, build frontend if stale,
-   copy frontend/dist -> backend/src/claude_codex_monitor/static/, start
-   backend via `uv run uvicorn claude_codex_monitor.app:create_app --factory
-   --host 127.0.0.1 --port 8787` (or `uv run` a wrapper task), poll
-   /api/health until 200, open browser, clean shutdown, -Rebuild/-NoBrowser/-Port.
-9. README.md + docs (architecture, security model, DB schema, API summary,
-   provider adapter doc, troubleshooting).
-10. Final full test run (pytest/vitest/playwright/ruff/pyright/eslint/tsc),
-    fix failures, final commit, mark HANDOFF COMPLETE.
+1. DONE - Frontend scaffold created via `pnpm dlx create-vite frontend
+   --template react-ts` + Tailwind v4 (@tailwindcss/vite plugin, dark mode via
+   `.dark` class + `@custom-variant dark`), Recharts, @tanstack/react-query,
+   clsx, vitest + @testing-library/*, @playwright/test all installed.
+2. DONE - src/api/client.ts + src/types/usage.ts mirroring backend Pydantic
+   models exactly (UsageLimit, ProfileStatus, Settings, Summary, HistoryRow,
+   ProfileDiagnostics, DataQuality, UsageLevel, levelForPercent()).
+3. DONE - All components built: layout/{Header,SummaryCards}, providers/
+   {ProviderSection,ProfileCard,UsageBar} (text+icon+% always, never color
+   alone), history/{HistoryFilters,HistoryChart,HistoryPanel} (Recharts
+   LineChart, ReferenceLine per reset boundary, connectNulls=false so
+   unavailable readings never get faked via interpolation), diagnostics/
+   DiagnosticsDrawer (sanitized fields only), common/{StatusBadge,
+   CountdownTimer,ThemeToggle,SkeletonCard,EmptyState}.
+4. DONE - Hooks via React Query: useSummary/useProfiles/useHistory/
+   useRefresh(useRefreshAll+useRefreshProfile)/useSettings. Vite dev proxy
+   /api -> http://127.0.0.1:8787 configured in vite.config.ts.
+5. DONE - Settings wired: theme + auto-refresh toggle + interval selector in
+   Header, calling PATCH /api/settings via useSettingsMutation.
+6. DONE - Refresh-all and per-profile refresh buttons wired to real mutations,
+   invalidate profiles/summary/history/limits-all query caches on success.
+7. NOT YET DONE - vitest unit tests and Playwright e2e tests. FAKE_ADAPTERS
+   flag IS wired (see below) so e2e is unblocked; just need to write the
+   actual test files under frontend/src/**/*.test.tsx and frontend/e2e/.
+8. NOT YET DONE - start-dashboard.ps1 launcher (must call `pixi run <task>`
+   only, e.g. `pixi run sync`, `pixi run build-frontend`, `pixi run serve` -
+   see toolchain decision above).
+9. NOT YET DONE - README.md + docs.
+10. NOT YET DONE - Final full test run + lint/typecheck across both stacks,
+    final commit, mark HANDOFF COMPLETE.
+
+## Verified working end-to-end (manual browser smoke test)
+Built frontend (`pnpm build` in frontend/) copied into
+backend/src/claude_codex_monitor/static/, backend started with
+`uv run uvicorn claude_codex_monitor.app:create_app --factory --host
+127.0.0.1 --port 8787` (ad-hoc, not yet via pixi task in this exact test).
+Confirmed via `netstat -ano` that the listening socket is 127.0.0.1:8787
+only (not 0.0.0.0). Loaded http://127.0.0.1:8787 in the browser pane:
+dashboard renders all 5 real discovered profiles, summary cards populate,
+clicking "Refresh all" performed a REAL refresh (real sibling-DB read for
+Claude showing STALE 33-44% real numbers, REAL codex.exe app-server spawn
+showing VERIFIED 5% primary), countdown timers correctly show Asia/Dhaka
+local time conversion, history endpoint recorded 18 real snapshot rows
+after that one refresh. Page title fixed to "Claude & Codex Usage Monitor"
+(index.html). This is real functioning software, not a mockup.
+
+## Fake adapters (for e2e) - now wired
+backend/src/claude_codex_monitor/adapters/fake_adapter.py has
+FakeClaudeAdapter (2 profiles: "default" with verified 42%/88% data,
+"work" with unavailable/auth-required data) and FakeCodexAdapter (1 profile,
+verified 15% primary). app.py's `_wire_services` checks
+`config.fake_adapters_enabled()` (reads CLAUDE_CODEX_MONITOR_FAKE_ADAPTERS=1)
+and constructs DiscoveryService with the fake adapters instead of real ones
+when set. This means Playwright e2e tests CAN set that env var before
+starting the backend and will never touch real ~/.claude, ~/.codex, or spawn
+codex.exe.
 
 ## Risks and warnings
 - Do not modify anything under I:\Projects\Automation\Claude\Notifications\ or

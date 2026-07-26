@@ -1,0 +1,33 @@
+[project]
+name = "claude-codex-monitor"
+version = "0.1.0"
+description = "Local usage dashboard for Claude Code and Codex CLI profiles"
+authors = []
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+# pixi is the top-level task orchestrator only. It does NOT manage the Python
+# interpreter/dependencies itself - actual Python env/dependency resolution is
+# delegated to `uv` (backend/pyproject.toml + backend/uv.lock), and frontend
+# tooling is delegated to `pnpm` (frontend/package.json). Users should run
+# `pixi run <task>`, never invoke uv/pnpm binaries directly.
+
+[tasks]
+# --- Backend (wraps uv) ---
+sync = { cmd = "uv sync --extra dev --extra notify", cwd = "backend" }
+serve = { cmd = "uv run uvicorn claude_codex_monitor.app:create_app --factory --host 127.0.0.1 --port 8787", cwd = "backend" }
+dev-backend = { cmd = "uv run uvicorn claude_codex_monitor.app:create_app --factory --host 127.0.0.1 --port 8787 --reload", cwd = "backend" }
+test-backend = { cmd = "uv run pytest tests -q", cwd = "backend" }
+lint-backend = { cmd = "uv run ruff check src tests", cwd = "backend" }
+typecheck-backend = { cmd = "uv run pyright src", cwd = "backend" }
+
+# --- Frontend (wraps pnpm) ---
+install-frontend = { cmd = "pnpm install", cwd = "frontend" }
+dev-frontend = { cmd = "pnpm dev", cwd = "frontend" }
+build-frontend = { cmd = "pnpm build", cwd = "frontend" }
+test-frontend = { cmd = "pnpm test", cwd = "frontend" }
+lint-frontend = { cmd = "pnpm lint", cwd = "frontend" }
+e2e-frontend = { cmd = "pnpm exec playwright test", cwd = "frontend" }
+
+# --- Combined ---
+test = { depends-on = ["test-backend", "test-frontend"] }
