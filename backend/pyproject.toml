@@ -32,8 +32,14 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.ruff]
-line-length = 100
+line-length = 110
 src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# B008: FastAPI's Depends(...)/Query(...) default-argument pattern is intentional DI, not a bug.
+# UP042: keep `str, Enum` (not StrEnum) for broad pydantic/FastAPI JSON-serialization compatibility.
+ignore = ["B008", "UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501"]  # test fixtures/assertions occasionally exceed line-length for clarity

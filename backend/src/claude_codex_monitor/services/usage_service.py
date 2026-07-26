@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 from typing import Any
 
 from ..db.store import Store
@@ -80,7 +81,7 @@ class UsageService:
             ]
             return limits
 
-        any_unavailable_only = all(l.quality == DataQuality.UNAVAILABLE for l in limits)
+        any_unavailable_only = all(item.quality == DataQuality.UNAVAILABLE for item in limits)
         if any_unavailable_only:
             _consecutive_failures[profile_key] = _consecutive_failures.get(profile_key, 0) + 1
         else:
@@ -119,21 +120,21 @@ class UsageService:
         for row in rows:
             latest_by_window[row["window_id"]] = row  # rows are ASC by time, last wins
         results = []
-        for window_id, row in latest_by_window.items():
+        for row in latest_by_window.values():
             results.append(_row_to_usage_limit(row))
         return results
 
 
 def _row_to_usage_limit(row: dict[str, Any]) -> UsageLimit:
     import json
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     def parse_dt(value):
         if not value:
             return None
         dt = datetime.fromisoformat(value)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
 
     return UsageLimit(
@@ -147,12 +148,12 @@ def _row_to_usage_limit(row: dict[str, Any]) -> UsageLimit:
         reset_confirmed=bool(row.get("reset_confirmed")),
         quality=row["quality"],
         unavailable_reason=row.get("unavailable_reason"),
-        observed_at_utc=parse_dt(row["observed_at_utc"]) or datetime.now(timezone.utc),
+        observed_at_utc=parse_dt(row["observed_at_utc"]) or datetime.now(UTC),
         source_detail=json.loads(row["source_detail_json"]) if row.get("source_detail_json") else {},
     )
 
 
 def _now():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)

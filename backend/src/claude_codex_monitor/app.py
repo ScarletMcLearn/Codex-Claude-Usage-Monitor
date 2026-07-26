@@ -16,7 +16,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import paths
+from . import config, paths
+from .adapters.fake_adapter import FakeClaudeAdapter, FakeCodexAdapter
 from .api.routers import (
     diagnostics,
     discovery,
@@ -24,8 +25,10 @@ from .api.routers import (
     history,
     profiles,
     providers,
-    settings as settings_router,
     summary,
+)
+from .api.routers import (
+    settings as settings_router,
 )
 from .db.store import Store
 from .scheduler import RefreshScheduler
@@ -45,7 +48,12 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 def _wire_services(app: FastAPI) -> None:
     paths.ensure_dirs()
     store = Store()
-    discovery_service = DiscoveryService(store)
+    if config.fake_adapters_enabled():
+        discovery_service = DiscoveryService(
+            store, claude_adapter=FakeClaudeAdapter(), codex_adapter=FakeCodexAdapter()
+        )
+    else:
+        discovery_service = DiscoveryService(store)
     history_service = HistoryService(store)
     settings_service = SettingsService(store)
     notification_service = NotificationService(store)
@@ -53,6 +61,7 @@ def _wire_services(app: FastAPI) -> None:
     usage_service = UsageService(
         store, discovery_service, history_service, settings_service, notification_service
     )
+    diagnostics_service = DiagnosticsService(store, discovery_service)
     scheduler = RefreshScheduler(discovery_service, usage_service, settings_service)
 
     app.state.store = store
@@ -62,6 +71,7 @@ def _wire_services(app: FastAPI) -> None:
     app.state.notification_service = notification_service
     app.state.forecast_service = forecast_service
     app.state.usage_service = usage_service
+    app.state.diagnostics_service = diagnostics_service
     app.state.scheduler = scheduler
 
 

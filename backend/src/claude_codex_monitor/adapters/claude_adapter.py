@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from ..models.diagnostics import ProfileDiagnostics
@@ -93,7 +93,7 @@ class ClaudeProviderAdapter:
         return {"ok": True, "reason": None, "windows": windows}
 
     def parse_usage(self, profile: ProfileStatus, raw: dict[str, Any]) -> list[UsageLimit]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if not raw.get("ok"):
             # Report a single UNAVAILABLE placeholder row (window_id "unknown")
             # so the UI has something to render per profile even with zero data.

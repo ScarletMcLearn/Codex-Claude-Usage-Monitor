@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ..db.store import Store
@@ -35,11 +34,11 @@ class HistoryService:
         if previous is not None:
             prev_pct = previous.get("used_percent")
             prev_reset = previous.get("resets_at_utc")
+            prev_reset_dt = _parse(prev_reset) if prev_reset else None
             if (
                 limit.resets_at_utc is not None
-                and prev_reset
-                and _parse(prev_reset) is not None
-                and limit.resets_at_utc > _parse(prev_reset)
+                and prev_reset_dt is not None
+                and limit.resets_at_utc > prev_reset_dt
             ):
                 is_boundary = True
             elif (
@@ -86,7 +85,7 @@ class HistoryService:
     def maybe_apply_retention(self, retention_days: int) -> int:
         """Runs at most once per 24h process-wide, always logs before deleting."""
         global _last_sweep_at
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if _last_sweep_at is not None and now - _last_sweep_at < _RETENTION_SWEEP_MIN_INTERVAL:
             return 0
         _last_sweep_at = now
@@ -100,7 +99,7 @@ class HistoryService:
 
 
 def _range_to_since(range_key: str) -> datetime | None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     mapping = {
         "today": timedelta(days=1),
         "7d": timedelta(days=7),
@@ -118,5 +117,5 @@ def _parse(value: str) -> datetime | None:
     except ValueError:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt

@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import dataclasses
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 _BUSY_TIMEOUT_MS = 4000
 
@@ -41,11 +41,11 @@ class WindowReading:
     def resets_at_utc(self) -> datetime | None:
         if self.resets_at is None:
             return None
-        return datetime.fromtimestamp(self.resets_at, tz=timezone.utc)
+        return datetime.fromtimestamp(self.resets_at, tz=UTC)
 
     @property
     def updated_at_utc(self) -> datetime:
-        return datetime.fromtimestamp(self.updated_utc, tz=timezone.utc)
+        return datetime.fromtimestamp(self.updated_utc, tz=UTC)
 
 
 class ClaudeNotifierStateReader:

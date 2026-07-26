@@ -17,7 +17,7 @@ absent - that must render as "no data", never zero.
 from __future__ import annotations
 
 import dataclasses
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 WINDOW_FIVE_HOUR = "five_hour"
@@ -67,7 +67,7 @@ def coerce_epoch_seconds(value: Any) -> int | None:
 
 
 def epoch_to_utc(epoch: int) -> datetime:
-    return datetime.fromtimestamp(epoch, tz=timezone.utc)
+    return datetime.fromtimestamp(epoch, tz=UTC)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -91,7 +91,7 @@ class StatusLinePayload:
     had_rate_limits: bool
 
     @classmethod
-    def parse(cls, raw: Any) -> "StatusLinePayload":
+    def parse(cls, raw: Any) -> StatusLinePayload:
         if not isinstance(raw, dict):
             return cls(session_id=None, version=None, windows={}, had_rate_limits=False)
 

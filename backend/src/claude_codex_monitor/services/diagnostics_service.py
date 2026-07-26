@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+
 from ..db.store import Store
 from ..models.diagnostics import ProfileDiagnostics
 from ..models.profile import ProfileStatus
@@ -39,12 +41,12 @@ class DiagnosticsService:
 def _parse(value):
     if not value:
         return None
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     try:
         dt = datetime.fromisoformat(value)
     except ValueError:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt

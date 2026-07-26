@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProfileOverride(BaseModel):
@@ -28,8 +28,7 @@ class Settings(BaseModel):
     notify_on_reset: bool = True
     profile_overrides: list[ProfileOverride] = Field(default_factory=list)
 
-    class Config:
-        extra = "ignore"
+    model_config = ConfigDict(extra="ignore")
 
 
 class SettingsPatch(BaseModel):

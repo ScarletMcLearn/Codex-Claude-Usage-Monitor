@@ -10,7 +10,7 @@ provenance comment).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 
 DEFAULT_DISPLAY_TZ = "Asia/Dhaka"
 
@@ -75,7 +75,7 @@ def resolve_zone(name: str | None) -> ResolvedZone:
         )
 
     return ResolvedZone(
-        timezone.utc,
+        UTC,
         "UTC",
         "utc-fallback",
         f"Timezone {requested!r} could not be resolved; displaying UTC.",
@@ -94,9 +94,9 @@ def to_display(dt: datetime | None, tz_name: str | None) -> datetime | None:
     if dt is None:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt.astimezone(resolve_zone(tz_name).tz)
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)

@@ -31,7 +31,16 @@ class NotificationService:
         if not _TOAST_AVAILABLE:
             LOGGER.info("win11toast not installed; Windows notifications disabled (no-op).")
 
-    def _send(self, title: str, message: str, dedupe_key: str, *, profile_key: str, window_id: str, event_type: str) -> None:
+    def _send(
+        self,
+        title: str,
+        message: str,
+        dedupe_key: str,
+        *,
+        profile_key: str,
+        window_id: str,
+        event_type: str,
+    ) -> None:
         if self._store.was_notification_sent(dedupe_key):
             return
         sent = self._store.mark_notification_sent(
@@ -47,7 +56,9 @@ class NotificationService:
         else:
             LOGGER.info("[notification suppressed - win11toast unavailable] %s: %s", title, message)
 
-    def evaluate_usage(self, settings: Settings, profile_key: str, profile_label: str, limit: UsageLimit) -> None:
+    def evaluate_usage(
+        self, settings: Settings, profile_key: str, profile_label: str, limit: UsageLimit
+    ) -> None:
         if not settings.notifications_enabled:
             return
         reset_part = limit.resets_at_utc.isoformat() if limit.resets_at_utc else "no-reset"
@@ -100,7 +111,15 @@ class NotificationService:
                 event_type="usage_80",
             )
 
-    def notify_reset_completed(self, settings: Settings, profile_key: str, profile_label: str, window_id: str, window_label: str, reset_at_iso: str) -> None:
+    def notify_reset_completed(
+        self,
+        settings: Settings,
+        profile_key: str,
+        profile_label: str,
+        window_id: str,
+        window_label: str,
+        reset_at_iso: str,
+    ) -> None:
         if not settings.notifications_enabled or not settings.notify_on_reset:
             return
         key = f"{profile_key}|{window_id}|{reset_at_iso}|reset_completed"
@@ -113,7 +132,9 @@ class NotificationService:
             event_type="reset_completed",
         )
 
-    def notify_repeated_failures(self, settings: Settings, profile_key: str, profile_label: str, failure_count: int) -> None:
+    def notify_repeated_failures(
+        self, settings: Settings, profile_key: str, profile_label: str, failure_count: int
+    ) -> None:
         if not settings.notifications_enabled or not settings.notify_on_repeated_failures:
             return
         if failure_count not in (3, 10, 25):  # avoid spamming on every single failure

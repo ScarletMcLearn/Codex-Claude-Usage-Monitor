@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 
+from ..adapters.base import ProviderAdapter
 from ..adapters.claude_adapter import ClaudeProviderAdapter
 from ..adapters.codex_adapter import CodexProviderAdapter
 from ..db.store import Store
@@ -13,13 +15,18 @@ LOGGER = logging.getLogger("claude_codex_monitor.services.discovery")
 
 
 class DiscoveryService:
-    def __init__(self, store: Store, claude_adapter=None, codex_adapter=None) -> None:
+    def __init__(
+        self,
+        store: Store,
+        claude_adapter: ProviderAdapter | None = None,
+        codex_adapter: ProviderAdapter | None = None,
+    ) -> None:
         self._store = store
-        self.claude_adapter = claude_adapter or ClaudeProviderAdapter()
-        self.codex_adapter = codex_adapter or CodexProviderAdapter()
+        self.claude_adapter: ProviderAdapter = claude_adapter or ClaudeProviderAdapter()
+        self.codex_adapter: ProviderAdapter = codex_adapter or CodexProviderAdapter()
 
     @property
-    def adapters(self) -> dict[str, object]:
+    def adapters(self) -> dict[str, ProviderAdapter]:
         return {"claude": self.claude_adapter, "codex": self.codex_adapter}
 
     def discover_all(self) -> list[ProfileStatus]:
@@ -67,23 +74,23 @@ class DiscoveryService:
 def _parse(value):
     if not value:
         return None
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     try:
         dt = datetime.fromisoformat(value)
     except ValueError:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 
 def _is_stale(last_success_utc: str | None) -> bool:
     if not last_success_utc:
         return False
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     dt = _parse(last_success_utc)
     if dt is None:
         return False
-    return datetime.now(timezone.utc) - dt > timedelta(hours=6)
+    return datetime.now(UTC) - dt > timedelta(hours=6)

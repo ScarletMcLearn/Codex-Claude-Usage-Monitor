@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 
@@ -39,7 +39,9 @@ def get_summary(
                         over_80 += 1
                 if limit.resets_at_utc and (next_reset is None or limit.resets_at_utc < next_reset):
                     next_reset = limit.resets_at_utc
-            elif limit.quality == DataQuality.UNAVAILABLE and "auth" in (limit.unavailable_reason or "").lower():
+            elif limit.quality == DataQuality.UNAVAILABLE and "auth" in (
+                limit.unavailable_reason or ""
+            ).lower():
                 need_auth += 1
         if profile_ok:
             queried_ok += 1
@@ -54,5 +56,5 @@ def get_summary(
         "over_95_percent": over_95,
         "next_reset_utc": next_reset.isoformat() if next_reset else None,
         "stale_or_failed": stale_or_failed,
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "generated_at_utc": datetime.now(UTC).isoformat(),
     }

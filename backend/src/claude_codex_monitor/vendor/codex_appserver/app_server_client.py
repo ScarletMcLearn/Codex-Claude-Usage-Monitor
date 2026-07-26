@@ -18,7 +18,7 @@ import os
 import queue
 import subprocess
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -64,7 +64,7 @@ class AppServerClient:
         self.responses: queue.Queue[dict[str, Any]] = queue.Queue()
         self.notifications: queue.Queue[dict[str, Any]] = queue.Queue()
 
-    def __enter__(self) -> "AppServerClient":
+    def __enter__(self) -> AppServerClient:
         exe = str(self.profile.codex_executable or "codex")
         args: list[str] = [exe]
         if self.profile.profile_arg:
@@ -202,10 +202,10 @@ def parse_ts(value: Any) -> datetime | None:
         return None
     try:
         if isinstance(value, str) and value.endswith("Z"):
-            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
         if isinstance(value, str) and "T" in value:
-            return datetime.fromisoformat(value).astimezone(timezone.utc)
-        return datetime.fromtimestamp(int(value), timezone.utc)
+            return datetime.fromisoformat(value).astimezone(UTC)
+        return datetime.fromtimestamp(int(value), UTC)
     except (ValueError, OSError, OverflowError):
         return None
 

@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from ..paths import history_db_path
 from .schema_loader import SCHEMA_SQL
@@ -26,8 +26,8 @@ def _iso(dt: datetime | None) -> str | None:
     if dt is None:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc).isoformat()
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat()
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -38,8 +38,8 @@ def _parse_iso(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 class Store:
@@ -85,7 +85,7 @@ class Store:
         with self._connect() as connection:
             connection.execute(
                 "INSERT INTO refresh_log (event_utc, event_type, profile_key, detail) VALUES (?, ?, ?, ?)",
-                (_iso(datetime.now(timezone.utc)), event_type, profile_key, detail),
+                (_iso(datetime.now(UTC)), event_type, profile_key, detail),
             )
 
     # ------------------------------------------------------------- profiles
@@ -101,7 +101,7 @@ class Store:
         now: datetime | None = None,
     ) -> str:
         profile_key = f"{provider}:{profile_id}"
-        ts = _iso(now or datetime.now(timezone.utc))
+        ts = _iso(now or datetime.now(UTC))
         with self._connect() as connection:
             existing = connection.execute(
                 "SELECT profile_key FROM profiles WHERE profile_key = ?", (profile_key,)
@@ -135,7 +135,7 @@ class Store:
         error: str | None = None,
         now: datetime | None = None,
     ) -> None:
-        ts = _iso(now or datetime.now(timezone.utc))
+        ts = _iso(now or datetime.now(UTC))
         with self._connect() as connection:
             if success:
                 connection.execute(
@@ -217,7 +217,7 @@ class Store:
                     1 if is_reset_boundary else 0,
                 ),
             )
-            return cursor.lastrowid
+            return cursor.lastrowid or 0
 
     def get_last_snapshot(self, profile_key: str, window_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
@@ -242,12 +242,16 @@ class Store:
         limit: int = 5000,
     ) -> list[dict[str, Any]]:
         query = [
-            "SELECT s.*, p.provider as provider, p.label as profile_label, p.friendly_name "
-            "FROM usage_snapshots s JOIN profiles p ON p.profile_key = s.profile_key WHERE 1=1"
+            "SELECT s.*, "
+            "COALESCE(p.provider, substr(s.profile_key, 1, instr(s.profile_key, ':') - 1)) as provider, "
+            "p.label as profile_label, p.friendly_name "
+            "FROM usage_snapshots s LEFT JOIN profiles p ON p.profile_key = s.profile_key WHERE 1=1"
         ]
         params: list[Any] = []
         if provider:
-            query.append("AND p.provider = ?")
+            query.append(
+                "AND COALESCE(p.provider, substr(s.profile_key, 1, instr(s.profile_key, ':') - 1)) = ?"
+            )
             params.append(provider)
         if profile_key:
             query.append("AND s.profile_key = ?")
@@ -276,7 +280,7 @@ class Store:
         """Delete snapshots older than retention_days. Always logs before deleting.
         Returns number of rows deleted. Safe to call at most once/day by caller.
         """
-        cutoff = (now or datetime.now(timezone.utc))
+        cutoff = (now or datetime.now(UTC))
         from datetime import timedelta
 
         cutoff = cutoff - timedelta(days=retention_days)
@@ -291,7 +295,7 @@ class Store:
             connection.execute(
                 "INSERT INTO refresh_log (event_utc, event_type, profile_key, detail) VALUES (?, ?, NULL, ?)",
                 (
-                    _iso(datetime.now(timezone.utc)),
+                    _iso(datetime.now(UTC)),
                     "retention_delete",
                     f"Deleting {to_delete} snapshot(s) older than {retention_days}d (cutoff {cutoff_iso})",
                 ),
@@ -308,7 +312,7 @@ class Store:
             connection.execute(
                 "INSERT INTO refresh_log (event_utc, event_type, profile_key, detail) VALUES (?, ?, NULL, ?)",
                 (
-                    _iso(datetime.now(timezone.utc)),
+                    _iso(datetime.now(UTC)),
                     "manual_delete",
                     f"Manual full-history delete requested via API; deleting {total} snapshot(s)",
                 ),
@@ -347,7 +351,7 @@ class Store:
             cursor = connection.execute(
                 "INSERT OR IGNORE INTO sent_notifications "
                 "(dedupe_key, profile_key, window_id, event_type, sent_utc) VALUES (?, ?, ?, ?, ?)",
-                (dedupe_key, profile_key, window_id, event_type, _iso(datetime.now(timezone.utc))),
+                (dedupe_key, profile_key, window_id, event_type, _iso(datetime.now(UTC))),
             )
         return cursor.rowcount > 0
 

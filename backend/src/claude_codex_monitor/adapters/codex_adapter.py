@@ -11,7 +11,7 @@ DB reads. In practice only the "primary" window is reliably present;
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from ..models.diagnostics import ProfileDiagnostics
@@ -91,7 +91,7 @@ class CodexProviderAdapter:
         return probe_profile(candidate, timeout=_PROBE_TIMEOUT_SECONDS)
 
     def parse_usage(self, profile: ProfileStatus, raw: ProbeResult) -> list[UsageLimit]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if not raw.ok:
             reason = raw.error or "Codex app-server probe failed"
             if "auth" in (raw.error or "").lower() or "unauthenticated" in (raw.error or "").lower():
@@ -129,7 +129,8 @@ class CodexProviderAdapter:
             reason = None
             if used_percent is None:
                 quality = DataQuality.UNAVAILABLE
-                reason = f"{_WINDOW_LABELS.get(w.window_name, w.window_name)} window present but no usedPercent reported."
+                window_label = _WINDOW_LABELS.get(w.window_name, w.window_name)
+                reason = f"{window_label} window present but no usedPercent reported."
             else:
                 remaining_percent = max(0.0, 100.0 - used_percent)
 
@@ -177,7 +178,10 @@ class CodexProviderAdapter:
         suggested = "Run `codex login` if authentication is required, or check that codex.exe is on PATH."
         error_text = str(error)[:300] if error else None
         if error_text and "timeout" in error_text.lower():
-            suggested = "The app-server probe timed out; the profile may be unresponsive or under load. Retry later."
+            suggested = (
+                "The app-server probe timed out; the profile may be unresponsive or under load. "
+                "Retry later."
+            )
         return ProfileDiagnostics(
             provider=self.provider_name,
             profile_id=profile.profile_id,
