@@ -1,0 +1,21 @@
+[project]
+name = "claude-codex-monitor"
+version = "0.1.0"
+description = "Local usage dashboard for Claude Code and Codex CLI profiles"
+authors = []
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[dependencies]
+python = "3.12.*"
+pip = "*"
+
+[pypi-dependencies]
+claude-codex-monitor = { path = "backend", editable = true }
+
+[tasks]
+serve = "uvicorn claude_codex_monitor.app:create_app --factory --host 127.0.0.1 --port 8787"
+dev-backend = "uvicorn claude_codex_monitor.app:create_app --factory --host 127.0.0.1 --port 8787 --reload"
+test = "pytest backend/tests -q"
+lint = "ruff check backend/src backend/tests"
+typecheck = "pyright backend/src"
