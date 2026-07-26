@@ -7,6 +7,7 @@ otherwise (never blocks the rest of the app).
 from __future__ import annotations
 
 import logging
+import threading
 
 from ..db.store import Store
 from ..models.settings import Settings
@@ -49,10 +50,16 @@ class NotificationService:
         if not sent:
             return
         if _TOAST_AVAILABLE:
-            try:
-                _toast(title, message)
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("Toast notification failed: %s", exc)
+            # win11toast's toast() call blocks the calling thread until the
+            # notification is dismissed/times out (can take ~10s). Fire it on
+            # a daemon thread so notifications never delay a refresh request.
+            def _fire() -> None:
+                try:
+                    _toast(title, message)
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.warning("Toast notification failed: %s", exc)
+
+            threading.Thread(target=_fire, daemon=True).start()
         else:
             LOGGER.info("[notification suppressed - win11toast unavailable] %s: %s", title, message)
 

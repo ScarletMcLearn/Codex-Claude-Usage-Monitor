@@ -77,6 +77,7 @@ export function Header({
 
           <button
             type="button"
+            data-testid="refresh-all-button"
             onClick={onRefreshAll}
             disabled={refreshing}
             className="rounded-md bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 px-3 py-1.5 text-sm font-medium disabled:opacity-50"
