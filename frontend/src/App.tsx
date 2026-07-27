@@ -16,6 +16,7 @@ import { EmptyState } from './components/common/EmptyState'
 import type { ProfileStatus, UsageLimit, UsageReport } from './types/usage'
 
 let initialRefreshStartedForSession = false
+const RESET_REFRESH_BUFFER_MS = 5_000
 
 function useAllLimits(profileKeys: string[]) {
   const queries = profileKeys.map((key) => ({
@@ -122,6 +123,7 @@ export default function App() {
   }
 
   const initialRefreshStarted = useRef(false)
+  const resetRefreshesStarted = useRef(new Set<string>())
   useEffect(() => {
     if (
       profilesLoading ||
@@ -147,6 +149,38 @@ export default function App() {
     return () => window.clearInterval(intervalId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings?.auto_refresh_enabled, settings?.refresh_interval_seconds])
+
+  const resetRefreshCandidates = useMemo(() => {
+    const resetTimes = [
+      summary?.next_reset_utc,
+      ...Object.values(limitsByProfile ?? {})
+        .flat()
+        .map((limit) => limit.resets_at_utc),
+    ]
+      .filter((value): value is string => Boolean(value))
+      .map((value) => ({ value, time: Date.parse(value) }))
+      .filter((item) => Number.isFinite(item.time))
+      .sort((a, b) => a.time - b.time)
+
+    return Array.from(new Map(resetTimes.map((item) => [item.value, item])).values())
+  }, [limitsByProfile, summary?.next_reset_utc])
+
+  useEffect(() => {
+    if (!settings?.auto_refresh_enabled) return
+    const nextResetRefresh = resetRefreshCandidates.find(
+      (item) => !resetRefreshesStarted.current.has(item.value)
+    )
+    if (!nextResetRefresh) return
+
+    const delay = Math.max(0, nextResetRefresh.time + RESET_REFRESH_BUFFER_MS - Date.now())
+    const timeoutId = window.setTimeout(() => {
+      resetRefreshesStarted.current.add(nextResetRefresh.value)
+      void handleRefreshAll()
+    }, delay)
+
+    return () => window.clearTimeout(timeoutId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetRefreshCandidates, settings?.auto_refresh_enabled])
 
   if (profilesLoading) {
     return (

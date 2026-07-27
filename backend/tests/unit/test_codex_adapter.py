@@ -50,8 +50,43 @@ def test_secondary_window_missing_is_unavailable_not_zero():
     limits = adapter.parse_usage(_profile(), result)
     names = {item.window_id for item in limits}
     assert names == {"primary"}  # secondary never fabricated as a 0% row
+    assert limits[0].window_label == "7-day"
     assert limits[0].used_percent == 50
     assert limits[0].quality == DataQuality.VERIFIED
+
+
+def test_codex_duration_labels_match_human_windows():
+    candidate = CodexProfileCandidate(label="default", kind="default home", codex_home=Path("C:/fake/.codex"))
+    windows = [
+        LimitWindow(
+            source_id="s",
+            profile_labels=("default",),
+            account_label="a",
+            limit_id="codex-usage",
+            window_name="primary",
+            window_duration_mins=10080,
+            used_percent=50,
+            resets_at=None,
+        ),
+        LimitWindow(
+            source_id="s",
+            profile_labels=("default",),
+            account_label="a",
+            limit_id="codex-usage",
+            window_name="secondary",
+            window_duration_mins=300,
+            used_percent=10,
+            resets_at=None,
+        ),
+    ]
+    result = ProbeResult(profile=candidate, ok=True, account_label="a", rate_limits=windows)
+    adapter = CodexProviderAdapter()
+    limits = adapter.parse_usage(_profile(), result)
+
+    assert [(item.window_id, item.window_label) for item in limits] == [
+        ("primary", "7-day"),
+        ("secondary", "5-hour"),
+    ]
 
 
 def test_used_percent_none_is_unavailable_not_zero():
@@ -73,3 +108,4 @@ def test_used_percent_none_is_unavailable_not_zero():
     limits = adapter.parse_usage(_profile(), result)
     assert limits[0].quality == DataQuality.UNAVAILABLE
     assert limits[0].used_percent is None
+    assert limits[0].window_label == "7-day"

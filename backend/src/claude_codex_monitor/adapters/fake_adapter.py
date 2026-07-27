@@ -129,7 +129,7 @@ class FakeCodexAdapter:
                 provider="codex",
                 profile_id=profile.profile_id,
                 window_id="primary",
-                window_label="Primary",
+                window_label="7-day",
                 window_duration_minutes=10080,
                 used_percent=15.0,
                 remaining_percent=85.0,

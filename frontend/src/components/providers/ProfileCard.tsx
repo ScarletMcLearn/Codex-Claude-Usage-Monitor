@@ -1,9 +1,47 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import type { ProfileStatus, UsageLimit } from '../../types/usage'
 import { UsageBar } from './UsageBar'
 import { StatusBadge } from '../common/StatusBadge'
 import { CountdownTimer } from '../common/CountdownTimer'
+
+function formatPercent(value: number | null) {
+  return value === null ? '—' : `${value.toFixed(0)}%`
+}
+
+function Metric({
+  label,
+  value,
+  className,
+  valueClassName,
+  testId,
+}: {
+  label: string
+  value: ReactNode
+  className?: string
+  valueClassName?: string
+  testId?: string
+}) {
+  return (
+    <div
+      className={clsx(
+        'min-w-0 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40',
+        className
+      )}
+    >
+      <p className="text-[11px] font-semibold uppercase text-slate-500 dark:text-slate-400">{label}</p>
+      <p
+        className={clsx(
+          'text-xl font-semibold leading-tight text-slate-900 dark:text-slate-50',
+          valueClassName
+        )}
+        data-testid={testId}
+      >
+        {value}
+      </p>
+    </div>
+  )
+}
 
 export function ProfileCard({
   profile,
@@ -76,7 +114,33 @@ export function ProfileCard({
           <p className="text-sm text-slate-500 dark:text-slate-400">No usage data yet.</p>
         ) : (
           limits.map((limit) => (
-            <div key={limit.window_id} className="space-y-1">
+            <div
+              key={limit.window_id}
+              className="space-y-2 rounded-md border border-slate-100 p-2 dark:border-slate-700/70"
+            >
+              <div className="grid grid-cols-2 gap-2">
+                <Metric label="Used" value={formatPercent(limit.used_percent)} testId="used-percent" />
+                <Metric
+                  label="Remaining"
+                  value={formatPercent(limit.remaining_percent)}
+                  valueClassName="text-emerald-700 dark:text-emerald-300"
+                  testId="remaining-percent"
+                />
+                <Metric
+                  label="Reset"
+                  value={
+                    <CountdownTimer
+                      targetIso={limit.resets_at_utc}
+                      displayTimeZone={displayTimeZone}
+                      isStale={limit.quality === 'stale'}
+                      showLocalTime={false}
+                    />
+                  }
+                  className="col-span-2"
+                  valueClassName="whitespace-normal text-2xl"
+                  testId="reset-countdown"
+                />
+              </div>
               <UsageBar
                 usedPercent={limit.used_percent}
                 quality={limit.quality}
@@ -84,7 +148,7 @@ export function ProfileCard({
                 label={limit.window_label}
               />
               <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                <span>Resets: <CountdownTimer targetIso={limit.resets_at_utc} displayTimeZone={displayTimeZone} isStale={limit.quality === 'stale'} /></span>
+                <span>Status</span>
                 <StatusBadge quality={limit.quality} />
               </div>
             </div>

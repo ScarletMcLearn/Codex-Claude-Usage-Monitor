@@ -82,9 +82,10 @@ const settings = (autoRefresh: boolean): Settings => ({
   profile_overrides: [],
 })
 
-async function renderApp(autoRefresh = true) {
+async function renderApp(autoRefresh = true, summaryOverride: Partial<Summary> = {}) {
   vi.resetModules()
   const refreshAll = vi.fn().mockResolvedValue({ profiles_refreshed: 3, results: {} })
+  const mockedSummary = { ...summary, ...summaryOverride }
   const usageReport = vi.fn().mockResolvedValue({
     generated_at_utc: '2026-07-26T22:05:00Z',
     profiles_checked: 1,
@@ -103,7 +104,7 @@ async function renderApp(autoRefresh = true) {
   vi.doMock('./api/client', () => ({
     api: {
       profiles: vi.fn().mockResolvedValue(profiles),
-      summary: vi.fn().mockResolvedValue(summary),
+      summary: vi.fn().mockResolvedValue(mockedSummary),
       getSettings: vi.fn().mockResolvedValue(settings(autoRefresh)),
       refreshAll,
       usageReport,
@@ -160,6 +161,18 @@ describe('App refresh orchestration', () => {
     await waitFor(() => expect(refreshAll).toHaveBeenCalledTimes(1))
 
     vi.advanceTimersByTime(60_000)
+
+    await waitFor(() => expect(refreshAll).toHaveBeenCalledTimes(2))
+  })
+
+  it('refreshes shortly after the next reset time passes', async () => {
+    vi.setSystemTime(new Date('2026-07-26T21:59:50Z'))
+    const { refreshAll } = await renderApp(true, {
+      next_reset_utc: '2026-07-26T22:00:00Z',
+    })
+    await waitFor(() => expect(refreshAll).toHaveBeenCalledTimes(1))
+
+    vi.advanceTimersByTime(15_000)
 
     await waitFor(() => expect(refreshAll).toHaveBeenCalledTimes(2))
   })

@@ -54,6 +54,10 @@ describe('ProfileCard', () => {
     expect(screen.getByText('default')).toBeInTheDocument()
     expect(screen.getByText('~/.claude')).toBeInTheDocument()
     expect(screen.getByText('5-hour')).toBeInTheDocument()
+    expect(screen.getByText('Used')).toBeInTheDocument()
+    expect(screen.getByTestId('used-percent')).toHaveTextContent('42%')
+    expect(screen.getByTestId('remaining-percent')).toHaveTextContent('58%')
+    expect(screen.getByTestId('reset-countdown')).not.toHaveTextContent('Unknown')
   })
 
   it('shows "No usage data yet" empty state when limits is empty', () => {
@@ -110,5 +114,30 @@ describe('ProfileCard', () => {
       />
     )
     expect(screen.getByText('Refresh failed: timeout')).toBeInTheDocument()
+  })
+
+  it('shows unknown metrics without fabricating zeroes', () => {
+    render(
+      <ProfileCard
+        profile={profile}
+        limits={[
+          {
+            ...limits[0],
+            used_percent: null,
+            remaining_percent: null,
+            resets_at_utc: null,
+            quality: 'unavailable',
+            unavailable_reason: 'No usage data',
+          },
+        ]}
+        displayTimeZone="Asia/Dhaka"
+        onRefresh={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('used-percent')).toHaveTextContent('—')
+    expect(screen.getByTestId('remaining-percent')).toHaveTextContent('—')
+    expect(screen.getByTestId('reset-countdown')).toHaveTextContent('Unknown')
+    expect(screen.queryByText('0%')).not.toBeInTheDocument()
   })
 })

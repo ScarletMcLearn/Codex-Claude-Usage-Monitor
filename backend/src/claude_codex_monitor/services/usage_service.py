@@ -116,13 +116,11 @@ class UsageService:
         """Return the latest known reading per window for a profile, without
         forcing a new fetch (used by GET endpoints)."""
         rows = self._store.get_history(profile_key=profile_key, limit=1000)
-        latest_by_window: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            latest_by_window[row["window_id"]] = row  # rows are ASC by time, last wins
-        results = []
-        for row in latest_by_window.values():
-            results.append(_row_to_usage_limit(row))
-        return results
+        if not rows:
+            return []
+
+        latest_observed = max(row["observed_at_utc"] for row in rows)
+        return [_row_to_usage_limit(row) for row in rows if row["observed_at_utc"] == latest_observed]
 
 
 def _row_to_usage_limit(row: dict[str, Any]) -> UsageLimit:
@@ -137,11 +135,20 @@ def _row_to_usage_limit(row: dict[str, Any]) -> UsageLimit:
             dt = dt.replace(tzinfo=UTC)
         return dt
 
+    def window_label() -> str:
+        label = row.get("window_label") or row["window_id"]
+        if row.get("provider") == "codex":
+            if row["window_id"] == "primary" or label in ("Primary", "1 week"):
+                return "7-day"
+            if row["window_id"] == "secondary" or label in ("Secondary", "5h"):
+                return "5-hour"
+        return label
+
     return UsageLimit(
         provider=row["provider"],
         profile_id=row["profile_key"].split(":", 1)[1] if ":" in row["profile_key"] else row["profile_key"],
         window_id=row["window_id"],
-        window_label=row.get("window_label") or row["window_id"],
+        window_label=window_label(),
         used_percent=row.get("used_percent"),
         remaining_percent=row.get("remaining_percent"),
         resets_at_utc=parse_dt(row.get("resets_at_utc")),

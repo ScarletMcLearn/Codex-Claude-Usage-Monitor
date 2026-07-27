@@ -23,10 +23,12 @@ export function CountdownTimer({
   targetIso,
   displayTimeZone,
   isStale,
+  showLocalTime = true,
 }: {
   targetIso: string | null
   displayTimeZone?: string
   isStale?: boolean
+  showLocalTime?: boolean
 }) {
   const [now, setNow] = useState(() => Date.now())
 
@@ -61,7 +63,7 @@ export function CountdownTimer({
   if (isStale && remaining <= 0) {
     return (
       <span title={localTime} data-testid="countdown-stale">
-        ~{localTime}{' '}
+        {showLocalTime ? `~${localTime}` : '~due now'}{' '}
         <span className="text-slate-500 dark:text-slate-400 text-xs">(stale estimate)</span>
       </span>
     )
@@ -69,8 +71,13 @@ export function CountdownTimer({
 
   return (
     <span title={localTime} data-testid="countdown">
-      {formatDuration(remaining)}{' '}
-      <span className="text-slate-500 dark:text-slate-400 text-xs">({localTime})</span>
+      {formatDuration(remaining)}
+      {showLocalTime && (
+        <>
+          {' '}
+          <span className="text-slate-500 dark:text-slate-400 text-xs">({localTime})</span>
+        </>
+      )}
     </span>
   )
 }

@@ -1,11 +1,29 @@
 import type { Summary } from '../../types/usage'
 import { CountdownTimer } from '../common/CountdownTimer'
 
-function Card({ label, value, tone }: { label: string; value: React.ReactNode; tone?: string }) {
+function Card({
+  label,
+  value,
+  tone,
+  className,
+  valueClassName,
+}: {
+  label: string
+  value: React.ReactNode
+  tone?: string
+  className?: string
+  valueClassName?: string
+}) {
   return (
-    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
+    <div
+      className={`rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 ${className ?? ''}`}
+    >
       <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
-      <p className={`text-2xl font-semibold ${tone ?? 'text-slate-900 dark:text-slate-50'}`}>{value}</p>
+      <p
+        className={`${valueClassName ?? 'text-2xl'} font-semibold ${tone ?? 'text-slate-900 dark:text-slate-50'}`}
+      >
+        {value}
+      </p>
     </div>
   )
 }
@@ -18,7 +36,7 @@ export function SummaryCards({
   displayTimeZone: string
 }) {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3" data-testid="summary-cards">
+    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3" data-testid="summary-cards">
       <Card label="Total profiles" value={summary.total_profiles} />
       <Card label="Queried OK" value={summary.queried_successfully} />
       <Card
@@ -39,6 +57,8 @@ export function SummaryCards({
       <Card
         label="Next reset"
         value={<CountdownTimer targetIso={summary.next_reset_utc} displayTimeZone={displayTimeZone} />}
+        className="col-span-2 md:col-span-2"
+        valueClassName="text-3xl leading-tight"
       />
       <Card
         label="Stale / failed"

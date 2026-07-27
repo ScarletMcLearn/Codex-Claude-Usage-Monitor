@@ -25,7 +25,14 @@ LOGGER = logging.getLogger("claude_codex_monitor.adapters.codex")
 
 _PROBE_TIMEOUT_SECONDS = 18.0
 
-_WINDOW_LABELS = {"primary": "Primary", "secondary": "Secondary"}
+_WINDOW_LABELS = {"primary": "7-day", "secondary": "5-hour"}
+_DURATION_LABELS = {300: "5-hour", 10080: "7-day"}
+
+
+def _window_label(window_name: str, duration_mins: int | None) -> str:
+    if duration_mins in _DURATION_LABELS:
+        return _DURATION_LABELS[duration_mins]
+    return _WINDOW_LABELS.get(window_name, window_name)
 
 
 def _candidate_key(c: CodexProfileCandidate) -> str:
@@ -129,7 +136,7 @@ class CodexProviderAdapter:
             reason = None
             if used_percent is None:
                 quality = DataQuality.UNAVAILABLE
-                window_label = _WINDOW_LABELS.get(w.window_name, w.window_name)
+                window_label = _window_label(w.window_name, w.window_duration_mins)
                 reason = f"{window_label} window present but no usedPercent reported."
             else:
                 remaining_percent = max(0.0, 100.0 - used_percent)
@@ -139,7 +146,7 @@ class CodexProviderAdapter:
                     provider=self.provider_name,
                     profile_id=profile.profile_id,
                     window_id=w.window_name,
-                    window_label=_WINDOW_LABELS.get(w.window_name, w.window_name),
+                    window_label=_window_label(w.window_name, w.window_duration_mins),
                     window_duration_minutes=w.window_duration_mins,
                     used_percent=used_percent,
                     remaining_percent=remaining_percent,
