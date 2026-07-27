@@ -13,6 +13,8 @@ export function Header({
   lastRefresh,
   onRefreshAll,
   refreshing,
+  onUsageReport,
+  reporting,
   autoRefreshEnabled,
   onToggleAutoRefresh,
   refreshIntervalSeconds,
@@ -24,6 +26,8 @@ export function Header({
   lastRefresh: string | null
   onRefreshAll: () => void
   refreshing: boolean
+  onUsageReport: () => void
+  reporting: boolean
   autoRefreshEnabled: boolean
   onToggleAutoRefresh: (v: boolean) => void
   refreshIntervalSeconds: number
@@ -83,6 +87,16 @@ export function Header({
             className="rounded-md bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 px-3 py-1.5 text-sm font-medium disabled:opacity-50"
           >
             {refreshing ? 'Refreshing…' : 'Refresh all'}
+          </button>
+
+          <button
+            type="button"
+            data-testid="usage-report-button"
+            onClick={onUsageReport}
+            disabled={reporting}
+            className="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+          >
+            {reporting ? 'Checking…' : 'Usage report'}
           </button>
 
           <ThemeToggle value={theme} onChange={onChangeTheme} />

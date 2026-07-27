@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useProfiles } from './hooks/useProfiles'
 import { useSummary } from './hooks/useSummary'
 import { useSettings } from './hooks/useSettings'
@@ -7,12 +7,15 @@ import { api } from './api/client'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Header } from './components/layout/Header'
 import { SummaryCards } from './components/layout/SummaryCards'
-import { ProviderSection } from './components/providers/ProviderSection'
+import { UsageReportPanel } from './components/layout/UsageReportPanel'
+import { ProfileCard } from './components/providers/ProfileCard'
 import { HistoryPanel } from './components/history/HistoryPanel'
 import { DiagnosticsDrawer } from './components/diagnostics/DiagnosticsDrawer'
 import { SkeletonCard } from './components/common/SkeletonCard'
 import { EmptyState } from './components/common/EmptyState'
-import type { UsageLimit } from './types/usage'
+import type { ProfileStatus, UsageLimit, UsageReport } from './types/usage'
+
+let initialRefreshStartedForSession = false
 
 function useAllLimits(profileKeys: string[]) {
   const queries = profileKeys.map((key) => ({
@@ -34,10 +37,21 @@ function useAllLimits(profileKeys: string[]) {
   })
 }
 
+function isDefaultProfile(profile: ProfileStatus) {
+  return profile.label.toLowerCase() === 'default' || profile.profile_id.toLowerCase() === 'default'
+}
+
+function cardOrder(profile: ProfileStatus) {
+  if (profile.provider === 'claude' && isDefaultProfile(profile)) return 0
+  if (profile.provider === 'codex' && isDefaultProfile(profile)) return 1
+  if (isDefaultProfile(profile)) return 2
+  return profile.provider === 'claude' ? 3 : 4
+}
+
 export default function App() {
   const { data: profiles, isLoading: profilesLoading } = useProfiles()
   const { data: summary } = useSummary()
-  const { data: settings } = useSettings()
+  const { data: settings, isLoading: settingsLoading } = useSettings()
   const settingsMutation = useSettingsMutation()
   const refreshAll = useRefreshAll()
   const refreshProfile = useRefreshProfile()
@@ -45,14 +59,33 @@ export default function App() {
 
   const [diagnosticsProfileKey, setDiagnosticsProfileKey] = useState<string | null>(null)
   const [refreshingKey, setRefreshingKey] = useState<string | null>(null)
+  const [usageReport, setUsageReport] = useState<UsageReport | null>(null)
+  const [usageReportError, setUsageReportError] = useState<string | null>(null)
+  const [usageReportLoading, setUsageReportLoading] = useState(false)
 
   const profileKeys = useMemo(() => (profiles ?? []).map((p) => p.profile_key), [profiles])
   const { data: limitsByProfile } = useAllLimits(profileKeys)
 
-  const claudeProfiles = (profiles ?? []).filter((p) => p.provider === 'claude')
-  const codexProfiles = (profiles ?? []).filter((p) => p.provider === 'codex')
+  const orderedProfiles = useMemo(
+    () =>
+      [...(profiles ?? [])].sort((a, b) => {
+        const orderDelta = cardOrder(a) - cardOrder(b)
+        if (orderDelta !== 0) return orderDelta
+        return (a.friendly_name || a.label).localeCompare(b.friendly_name || b.label)
+      }),
+    [profiles]
+  )
 
   const displayTimeZone = settings?.display_timezone ?? 'Asia/Dhaka'
+  const latestRefresh = useMemo(() => {
+    const timestamps = (profiles ?? [])
+      .map((profile) => profile.last_refresh_utc ?? profile.last_success_utc)
+      .filter((value): value is string => Boolean(value))
+    if (timestamps.length === 0) return null
+    return timestamps.reduce((latest, value) =>
+      Date.parse(value) > Date.parse(latest) ? value : latest
+    )
+  }, [profiles])
 
   const health = useMemo<'good' | 'warning' | 'critical' | 'unknown'>(() => {
     if (!summary) return 'unknown'
@@ -76,6 +109,45 @@ export default function App() {
     queryClient.invalidateQueries({ queryKey: ['limits-all'] })
   }
 
+  async function handleUsageReport() {
+    setUsageReportLoading(true)
+    setUsageReportError(null)
+    try {
+      setUsageReport(await api.usageReport())
+    } catch (error) {
+      setUsageReportError(error instanceof Error ? error.message : 'Usage report failed')
+    } finally {
+      setUsageReportLoading(false)
+    }
+  }
+
+  const initialRefreshStarted = useRef(false)
+  useEffect(() => {
+    if (
+      profilesLoading ||
+      settingsLoading ||
+      initialRefreshStarted.current ||
+      initialRefreshStartedForSession
+    ) {
+      return
+    }
+    initialRefreshStarted.current = true
+    initialRefreshStartedForSession = true
+    void handleRefreshAll()
+    // Run once after initial profile/settings load; interval handles later refreshes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profilesLoading, settingsLoading])
+
+  useEffect(() => {
+    if (!settings?.auto_refresh_enabled) return
+    const intervalSeconds = Math.max(30, settings.refresh_interval_seconds)
+    const intervalId = window.setInterval(() => {
+      void handleRefreshAll()
+    }, intervalSeconds * 1000)
+    return () => window.clearInterval(intervalId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings?.auto_refresh_enabled, settings?.refresh_interval_seconds])
+
   if (profilesLoading) {
     return (
       <div className="mx-auto max-w-7xl p-4 space-y-4">
@@ -92,9 +164,11 @@ export default function App() {
   return (
     <div className="min-h-full">
       <Header
-        lastRefresh={summary?.generated_at_utc ?? null}
+        lastRefresh={latestRefresh}
         onRefreshAll={handleRefreshAll}
         refreshing={refreshAll.isPending}
+        onUsageReport={handleUsageReport}
+        reporting={usageReportLoading}
         autoRefreshEnabled={settings?.auto_refresh_enabled ?? true}
         onToggleAutoRefresh={(v) => settingsMutation.mutate({ auto_refresh_enabled: v })}
         refreshIntervalSeconds={settings?.refresh_interval_seconds ?? 300}
@@ -105,6 +179,15 @@ export default function App() {
       />
 
       <main className="mx-auto max-w-7xl p-4 space-y-8">
+        <UsageReportPanel
+          report={usageReport}
+          error={usageReportError}
+          onClose={() => {
+            setUsageReport(null)
+            setUsageReportError(null)
+          }}
+        />
+
         {summary && <SummaryCards summary={summary} displayTimeZone={displayTimeZone} />}
 
         {(profiles ?? []).length === 0 ? (
@@ -113,28 +196,24 @@ export default function App() {
             description="Click Refresh all, or check that Claude Code / Codex CLI are installed on this machine."
           />
         ) : (
-          <>
-            <ProviderSection
-              provider="claude"
-              title="Claude Code"
-              profiles={claudeProfiles}
-              limitsByProfile={limitsByProfile ?? {}}
-              displayTimeZone={displayTimeZone}
-              onRefresh={handleRefreshProfile}
-              onOpenDiagnostics={setDiagnosticsProfileKey}
-              refreshingKey={refreshingKey}
-            />
-            <ProviderSection
-              provider="codex"
-              title="Codex"
-              profiles={codexProfiles}
-              limitsByProfile={limitsByProfile ?? {}}
-              displayTimeZone={displayTimeZone}
-              onRefresh={handleRefreshProfile}
-              onOpenDiagnostics={setDiagnosticsProfileKey}
-              refreshingKey={refreshingKey}
-            />
-          </>
+          <section aria-labelledby="section-profiles" className="space-y-3">
+            <h2 id="section-profiles" className="text-lg font-semibold text-slate-800 dark:text-slate-100">
+              Profiles
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {orderedProfiles.map((profile) => (
+                <ProfileCard
+                  key={profile.profile_key}
+                  profile={profile}
+                  limits={limitsByProfile?.[profile.profile_key] ?? []}
+                  displayTimeZone={displayTimeZone}
+                  onRefresh={handleRefreshProfile}
+                  onOpenDiagnostics={setDiagnosticsProfileKey}
+                  isRefreshing={refreshingKey === profile.profile_key}
+                />
+              ))}
+            </div>
+          </section>
         )}
 
         <HistoryPanel profiles={profiles ?? []} />

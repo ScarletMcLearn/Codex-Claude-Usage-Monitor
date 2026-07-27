@@ -1,171 +1,110 @@
-<!-- CLAUDE-HANDOFF:COMPLETE -->
+<!-- CODEX-HANDOFF:COMPLETE -->
 
-# Claude Code Agent Handover
+# Codex Agent Handover
 
 ## Objective
-Build production-quality local usage dashboard (FastAPI+SQLite backend,
-React+TS+Vite+Tailwind+Recharts frontend) at
-I:\Projects\Automation\ClaudeCodexMonitor\1 that auto-discovers Claude Code +
-Codex profiles on this Windows machine, shows real usage/limits with
-verified/derived/estimated/stale/unavailable labeling, never fabricates
-data, single port 8787 prod-local mode.
+
+Fix dashboard freshness mismatch and add a usage report that calls each provider source and reports what it can prove.
 
 ## Current status
-COMPLETE. All 12 build-order phases done. Full test suite green across both
-stacks. Launcher script tested and working. README written.
+
+Freshness follow-up complete. Dashboard had prior implementation for live Claude usage and usage report; current fix adds stronger UI auto-update behavior for stats/history without manual browser/app refresh.
 
 ## Completed work
-- Read both reference sibling projects (read-only, never modified):
-  claude-usage-notifier and ai_usage_notifier.
-- Backend: FastAPI app, vendored+adapted discovery/models/state-reader for
-  Claude and discovery/models/app-server-client for Codex, domain models
-  (DataQuality/UsageLevel/UsageLimit/ProfileStatus/Settings/Diagnostics/
-  ForecastResult), ProviderAdapter protocol + Claude/Codex/Fake adapters,
-  SQLite store (WAL, profiles/usage_snapshots/settings/refresh_log/
-  sent_notifications), 7 services (discovery/usage/history/settings/
-  diagnostics/notification/forecast), asyncio background scheduler
-  (no-overlap lock, backoff+jitter), 8 API routers mounted under /api,
-  StaticFiles mount for built frontend.
-- Frontend: Vite+React+TS+Tailwind v4+Recharts+React Query dashboard with
-  Header/SummaryCards/ProviderSection/ProfileCard/UsageBar/HistoryPanel+
-  Chart+Filters/DiagnosticsDrawer/common components, all wired to the real
-  API via hooks.
-- Tests: 54 pytest (unit+API), 29 vitest (component), 7 Playwright e2e
-  (against FakeClaudeAdapter/FakeCodexAdapter via
-  CLAUDE_CODEX_MONITOR_FAKE_ADAPTERS=1) - all passing.
-- Lint/typecheck: ruff clean, pyright 0 errors, oxlint clean, tsc -b clean.
-- start-dashboard.ps1: validates pixi/uv/pnpm on PATH, builds frontend if
-  stale, copies dist into backend static/, starts backend via
-  `pixi run serve`, polls /api/health, opens browser, -Rebuild/-NoBrowser/
-  -Port flags all implemented and manually tested.
-- README.md: full architecture, security model, data-quality semantics,
-  install/dev/prod instructions, discovery/usage-source explanation,
-  troubleshooting, testing, DB/retention/deletion, API summary, adapter
-  interface doc, known limitations.
-- Found and fixed a REAL production bug during e2e testing: win11toast's
-  toast() call blocks the calling thread ~10s per notification; a refresh
-  triggering 3 notifications caused a 31-second hang on every /api/refresh-all
-  call. Fixed by firing toasts on a daemon thread
-  (services/notification_service.py). Verified fix: refresh-all now
-  completes in ~65ms instead of 31s.
+
+- User confirmed implementing TTY `/usage` probe is OK.
+- Confirmed Claude CLI 2.1.220 has no direct usage/rate-limit command (`claude --help`, `claude auth --help`, `claude doctor --help`).
+- Manual TTY probe with `claude` in repo and `C:\Users\getra` hit Claude trust gate. Chose not to auto-approve.
+- Found safer command: `claude -p /usage --output-format json` runs the slash command without TUI trust prompt and with zero API turns/cost.
+- Added parser for current Claude `/usage` output:
+  - `Current session: N% used - resets ...` -> `five_hour`
+  - `Current week (all models): N% used - resets ...` -> `seven_day`
+  - fallback patterns for explicit `5-hour`, `7-day`, `% remaining`, and `fully used`.
+- Wired Claude adapter to prefer `/usage` when parseable, mark limits `verified`, include parsed reset times, and fall back to statusline DB if command fails/no parse.
+- Updated usage report source/message for Claude `/usage` and fallback.
+- Live verification after restart: default Claude reported `12%` 5-hour reset `2026-07-27T08:10:00Z`, `2%` 7-day reset `2026-08-03T04:00:00Z`, source `claude /usage live command`, quality `verified`.
+- Live summary after `POST /api/refresh-all`: `queried_successfully: 5`, `stale_or_failed: 0`, next reset `2026-07-27T08:10:00+00:00`.
+- Confirmed Claude dashboard source is `ClaudeUsageNotifier` statusline DB. Default profile last captured `84%` at `2026-07-27T02:34:28+06`, so dashboard cannot infer later `100%` without a newer statusline payload.
+- Changed Claude freshness: statusline DB rows older than 10m become `stale`, not `verified`, with reason shown in UI.
+- Added `POST /api/usage-report`: actively checks every discovered active profile without persisting snapshots.
+- Report behavior: Codex uses live `codex app-server` probe; Claude uses latest captured statusline DB snapshot and reports that no direct Claude CLI usage command is available.
+- Added dashboard `Usage report` button in header and report panel with profile/source/window/used/quality/message rows.
+- Restarted dashboard on port 8787 with rebuilt frontend/static assets.
+- Live `/api/usage-report` verification: 5 profiles checked; all Claude rows stale with source note; Codex row verified from live app-server (`12%` at verification time).
+- Added `cache: 'no-store'` to frontend API requests so browser/proxy cache cannot serve stale stats.
+- Added 15s polling to `useHistory` so chart/stats history follows backend scheduler refreshes.
+- Updated refresh mutations to write returned limits into `limits-all` query cache immediately before invalidation, so refresh-all/profile refresh updates usage bars without waiting for follow-up GET.
 
 ## Files changed
-See git log - 6 commits total:
-1. Backend scaffold+services+API (initial, pixi-based env - later migrated)
-2. Backend: switch to uv toolchain, add 54 tests, fix ruff/pyright, fake adapters
-3. Frontend: full React dashboard wired to real API; pixi restored as thin
-   orchestrator over uv+pnpm
-4. Fix win11toast blocking bug; add vitest+Playwright suites
-5. Add start-dashboard.ps1 launcher; fix CCM_PORT threading
-6. (this commit) README.md + final HANDOFF completion
 
-High-level layout: backend/src/claude_codex_monitor/{app.py, config.py,
-paths.py, timezones.py, models/, adapters/, vendor/{claude_statusline,
-codex_appserver}, services/, scheduler.py, db/, api/routers/, static/}.
-backend/tests/{conftest.py, fixtures/, unit/, api/}. frontend/src/{api/,
-types/, components/{layout,providers,history,diagnostics,common}/, hooks/,
-test/}. frontend/e2e/. Root: pixi.toml, README.md, .gitignore, .env.example,
-start-dashboard.ps1.
+- `backend/src/claude_codex_monitor/adapters/claude_adapter.py`: 10m Claude freshness and clear stale reason.
+- `backend/src/claude_codex_monitor/vendor/claude_usage_command.py`: new live Claude `/usage` command runner and parser.
+- `backend/src/claude_codex_monitor/api/routers/profiles.py`: new `/api/usage-report` endpoint.
+- `backend/tests/api/test_endpoints.py`: usage-report and summary regression tests.
+- `backend/tests/unit/test_claude_adapter.py`: freshness policy tests.
+- `backend/tests/unit/test_claude_usage_command.py`: `/usage` parser tests.
+- `frontend/src/App.tsx`: refresh orchestration plus usage report state/action/panel.
+- `frontend/src/api/client.ts`: `usageReport()` API call.
+- `frontend/src/api/client.ts`: all API fetches use `cache: 'no-store'`.
+- `frontend/src/components/layout/Header.tsx`: `Usage report` button.
+- `frontend/src/components/layout/UsageReportPanel.tsx`: new report UI.
+- `frontend/src/components/providers/UsageBar.tsx`: show stale reason text.
+- `frontend/src/hooks/useRefresh.ts`: invalidate `limits-all` after refresh.
+- `frontend/src/hooks/useRefresh.ts`: seed `limits-all` cache from refresh mutation responses.
+- `frontend/src/hooks/useHistory.ts`: poll history every 15s.
+- `frontend/src/test/setup.ts`: jsdom `matchMedia` stub.
+- `frontend/src/types/usage.ts`: usage report types.
+- `frontend/src/App.test.tsx`: app refresh/report tests.
+- `.agent/HANDOFF.md`: operational checkpoint.
 
-## Commands and tests run (final verification pass)
-- `pixi run test-backend` -> 54 passed.
-- `pixi run lint-backend` -> All checks passed (ruff).
-- `pixi run typecheck-backend` -> 0 errors, 0 warnings (pyright).
-- `pixi run test-frontend` -> 29 passed (vitest).
-- `pixi run lint-frontend` -> clean (oxlint).
-- `pnpm exec tsc -b` (frontend) -> clean.
-- `pixi run e2e-frontend` -> 7 passed (Playwright, fake adapters).
-- start-dashboard.ps1 manually run as a real process (pwsh -File, not inside
-  a PowerShell job - jobs have known native-process I/O capture quirks that
-  are a test-harness artifact, not a script bug) with -NoBrowser -Port 8798:
-  reached "Backend is healthy" and served both /api/health and / correctly;
-  confirmed via Get-NetTCPConnection that only 127.0.0.1:8798 was listening.
-- Manual live smoke test against REAL machine data (not fake adapters):
-  discovered 4 real Claude profiles (default/.claude, mt, nc, personal) and
-  1 real Codex profile (default/.codex); clicked Refresh all in the actual
-  browser UI; Claude profiles showed real STALE readings from the sibling
-  claude-usage-notifier DB (33-44% real numbers); Codex profile showed a
-  REAL live app-server probe result (VERIFIED 5% primary window); history
-  endpoint recorded 18 real snapshot rows; countdown timers correctly
-  rendered Asia/Dhaka local time.
+## Commands and tests run
+
+- `claude --help`, `claude auth --help`, `claude doctor --help`.
+- SQLite read against `%LOCALAPPDATA%\ClaudeUsageNotifier\state\usage_state.sqlite3` with escalation.
+- `uv run pytest tests/unit/test_claude_adapter.py`: 5 passed.
+- `pnpm run test -- src/components/providers/UsageBar.test.tsx`: 5 passed.
+- `uv run pytest tests/api/test_endpoints.py -q`: 11 passed, 1 warning.
+- `pnpm run test -- src/App.test.tsx`: 5 passed.
+- `pnpm run test -- src/App.test.tsx`: first run had transient fake-timer timeout in first test; immediate targeted retry passed, then full suite passed 5/5.
+- `pnpm run build`: failed in sandbox with `spawn EPERM` loading native Tailwind oxide.
+- Escalated `pnpm run build`: passed; Vite emitted only existing large chunk warning.
+- `uv run pytest`: 57 passed, 1 warning.
+- `uv run pytest -q`: 64 passed, 1 warning.
+- `pnpm run test`: 35 passed.
+- `pnpm run lint`: passed.
+- `pnpm run build`: passed.
+- `pixi run lint-backend`: passed after line-length fix.
+- `pixi run typecheck-backend`: 0 errors.
+- `uv run ruff check src tests`: passed.
+- `uv run pyright src`: 0 errors.
+- Restarted dashboard process and verified `POST http://127.0.0.1:8787/api/usage-report` works.
 
 ## Current failures or blockers
-None. All tests green, no known bugs outstanding.
+
+No code/test blockers. Claude `/usage` output is not a formal stable API; parser may need update if Claude changes wording.
 
 ## Decisions and assumptions
-- TOOLCHAIN (final, after two revisions): pixi.toml is a thin task
-  orchestrator only (no `[dependencies]` beyond bare project metadata).
-  Every task shells out to `uv` (backend/pyproject.toml + backend/uv.lock is
-  the real Python dependency source of truth) or `pnpm` (frontend/
-  package.json). End users and start-dashboard.ps1 run `pixi run <task>`
-  only - never invoke uv/pnpm binaries directly. Verified working:
-  `pixi run serve` correctly threads a custom CCM_PORT env var through to
-  uvicorn's `--port` argument (pixi's task shell does NOT support bash-style
-  `${VAR:-default}` syntax - plain `$VAR` works and the caller must set it
-  first; start-dashboard.ps1 always sets `$env:CCM_PORT` before invoking).
-- Claude adapter is read-only against the sibling claude-usage-notifier DB;
-  does not register its own statusline hook (documented as a known
-  limitation/tradeoff in README, given time constraints - the spec allowed
-  prioritizing self-contained discovery + sibling-DB-read over a
-  self-contained statusline hook).
-- Codex adapter does live on-demand app-server probing every refresh (18s
-  timeout), no additional caching layer beyond the history DB.
-- profile_key format is "provider:profile_id" everywhere.
-- Notification toasts fire on background daemon threads (critical fix -
-  win11toast's synchronous call blocks ~10s per toast otherwise).
-- Ruff: line-length=110, ignore B008 (FastAPI Depends pattern) and UP042
-  (kept `class X(str, Enum)` over StrEnum for pydantic/FastAPI JSON compat).
-- Frontend bundle is a single ~620KB JS chunk (not code-split) - noted as a
-  minor optimization opportunity, not fixed given time constraints; the app
-  is fully functional as-is and loads fast on localhost.
 
-## Exact next steps (if anyone continues this)
-Nothing required for correctness. Optional polish for a future session:
-1. Wire ClaudeNotifierStateReader.mark_reset_confirmed_seen into
-   history_service's reset-boundary detection so this dashboard also clears
-   the sibling notifier's reset_confirmed flag once it has recorded the new
-   cycle (currently unused, low priority).
-2. Code-split the frontend bundle (dynamic import for Recharts/History panel)
-   to shrink the single 620KB chunk if load time on a very slow machine
-   becomes a concern.
-3. Consider adding a lightweight in-app Claude statusline hook registration
-   flow (opt-in) so the dashboard can be fully self-contained for Claude
-   usage data without depending on the separate claude-usage-notifier tool.
-4. Settings UI currently only exposes auto-refresh/interval/theme from the
-   Header; a full Settings panel/modal for retention days, notification
-   toggles, hide-sensitive-paths, and per-profile friendly names/enable-
-   disable would be a nice addition (backend API already supports all of
-   this via GET/PATCH /api/settings - only frontend UI surface is missing).
+- Use `claude -p /usage --output-format json`, not a dummy assistant prompt. Current observed command returns zero API turns/cost for slash usage.
+- Report should be honest about source per provider.
+- Report endpoint should not persist snapshots/history.
+
+## Exact next steps
+
+Optional: commit implementation files, excluding `.agent/HANDOFF.md` and unrelated `?? .claude/`.
 
 ## Risks and warnings
-- Do not modify anything under I:\Projects\Automation\Claude\Notifications\
-  or I:\Projects\Automation\Codex\Notifications\ (read-only reference -
-  confirmed untouched throughout).
-- Never fabricate usage numbers; missing = Unavailable + reason (verified in
-  both backend tests and frontend UsageBar tests).
-- Bind 127.0.0.1 only - confirmed via netstat/Get-NetTCPConnection during
-  testing, both for ad-hoc uvicorn runs and via start-dashboard.ps1.
-- Before running `pnpm build` + copying to backend/static/, remember the
-  static/ directory content is what start-dashboard.ps1's staleness check
-  looks at - if you hand-edit frontend/dist without rebuilding via pnpm, the
-  staleness check may not catch it (it compares frontend/src and index.html
-  mtimes against frontend/dist, not backend/static/ directly - copying is a
-  manual step inside the same script, so this is self-consistent as-is).
-- backend/.venv, frontend/node_modules, .pixi/ are all real, gitignored,
-  present on disk - do not delete casually; `pixi run sync` /
-  `pixi run install-frontend` recreate them.
+
+- Claude `/usage` parser is best-effort against CLI text, not a guaranteed API contract.
+- Codex report does a real subprocess probe and may take seconds.
+- Existing untracked `.claude/` in repo left untouched.
 
 ## Repository state
-6 commits on branch master. Working tree clean except this final
-HANDOFF.md update (about to be finalized) and README.md (about to be
-committed alongside it). Run `git status --short` to confirm before any
-further changes.
 
-## Session information
-Single continuous foreground agent session for the entire build (no
-subagents spawned - all work done directly per task instructions not to
-re-delegate the whole task). No special env profile in use beyond ad-hoc
-CCM_DATA_DIR/CCM_PORT overrides used for isolated testing (all cleaned up).
+`git status --short`: modified `.agent/HANDOFF.md`, backend adapter/router/tests, frontend app/client/header/usage bar/hooks/types/tests/setup; untracked `.claude/`, `backend/src/claude_codex_monitor/vendor/claude_usage_command.py`, `backend/tests/unit/test_claude_usage_command.py`, `frontend/src/App.test.tsx`, `frontend/src/components/layout/UsageReportPanel.tsx`.
+
+`git diff --stat` tracked files: 13 files changed, 495 insertions(+), 167 deletions(-). Untracked new files not included in that stat.
 
 ## Last updated
-2026-07-27 01:20 (local, Asia/Dhaka assumed per spec default)
+
+2026-07-27T21:54:07+06:00

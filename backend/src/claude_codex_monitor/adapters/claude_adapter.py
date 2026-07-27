@@ -11,6 +11,7 @@ reason - never fabricated.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -21,12 +22,16 @@ from ..models.usage import DataQuality, UsageLimit
 from ..paths import claude_usage_notifier_db_path
 from ..vendor.claude_statusline import discovery as claude_discovery
 from ..vendor.claude_statusline.models import WINDOW_LABELS
-from ..vendor.claude_statusline.state_reader import ClaudeNotifierStateReader, WindowReading
+from ..vendor.claude_statusline.state_reader import ClaudeNotifierStateReader
+from ..vendor.claude_usage_command import ClaudeUsageCommandResult, run_usage_command
 
 LOGGER = logging.getLogger("claude_codex_monitor.adapters.claude")
 
-# Staleness threshold: a reading older than this is downgraded to STALE.
-_STALE_AFTER_SECONDS = 6 * 3600
+# Claude values are snapshots from the statusline hook, not a live query the
+# dashboard can force. Keep the freshness window short so fast-moving limit
+# usage is not shown as "verified" long after Claude last emitted statusline
+# data.
+_STALE_AFTER_SECONDS = 10 * 60
 
 
 class ClaudeProviderAdapter:
@@ -66,8 +71,30 @@ class ClaudeProviderAdapter:
     def _reader(self) -> ClaudeNotifierStateReader:
         return ClaudeNotifierStateReader(self._notifier_db_path)
 
+    def _usage_command_enabled(self) -> bool:
+        return os.environ.get("CCM_CLAUDE_USAGE_COMMAND", "1") != "0"
+
+    def _run_usage_command(self, profile: ProfileStatus) -> ClaudeUsageCommandResult:
+        return run_usage_command(profile.profile_id)
+
     def fetch_usage(self, profile: ProfileStatus) -> dict[str, Any]:
-        """Read-only lookup in the sibling notifier's DB. Never raises."""
+        """Best available Claude lookup. Never raises.
+
+        Prefer the user's own `/usage` command path when it yields explicit
+        rate-limit percentages; otherwise fall back to the statusline DB.
+        """
+        command_result = None
+        if self._usage_command_enabled():
+            command_result = self._run_usage_command(profile)
+            if command_result.ok and command_result.windows:
+                return {
+                    "ok": True,
+                    "reason": None,
+                    "windows": command_result.windows,
+                    "source": "claude_usage_command",
+                    "usage_command": command_result,
+                }
+
         reader = self._reader()
         if not reader.is_available():
             return {
@@ -78,6 +105,8 @@ class ClaudeProviderAdapter:
                     "statusline hook configured to populate real usage data."
                 ),
                 "windows": [],
+                "source": "claude_usage_notifier_db",
+                "usage_command": command_result,
             }
         windows = reader.get_windows_for_profile(profile.profile_id)
         if not windows:
@@ -89,8 +118,16 @@ class ClaudeProviderAdapter:
                     "after the first API response in a session)."
                 ),
                 "windows": [],
+                "source": "claude_usage_notifier_db",
+                "usage_command": command_result,
             }
-        return {"ok": True, "reason": None, "windows": windows}
+        return {
+            "ok": True,
+            "reason": None,
+            "windows": windows,
+            "source": "claude_usage_notifier_db",
+            "usage_command": command_result,
+        }
 
     def parse_usage(self, profile: ProfileStatus, raw: dict[str, Any]) -> list[UsageLimit]:
         now = datetime.now(UTC)
@@ -109,15 +146,46 @@ class ClaudeProviderAdapter:
                 )
             ]
 
+        source = raw.get("source") or "claude_usage_notifier_db"
+        usage_command: ClaudeUsageCommandResult | None = raw.get("usage_command")
         results: list[UsageLimit] = []
-        reading: WindowReading
+        reading: Any
         for reading in raw["windows"]:
+            if source == "claude_usage_command":
+                used_percent = reading.used_percentage
+                results.append(
+                    UsageLimit(
+                        provider=self.provider_name,
+                        profile_id=profile.profile_id,
+                        window_id=reading.window_name,
+                        window_label=WINDOW_LABELS.get(reading.window_name) or reading.window_name,
+                        used_percent=used_percent,
+                        remaining_percent=max(0.0, 100.0 - used_percent),
+                        resets_at_utc=reading.resets_at_utc,
+                        reset_confirmed=False,
+                        quality=DataQuality.VERIFIED,
+                        observed_at_utc=datetime.fromtimestamp(reading.updated_utc, tz=UTC),
+                        source_detail={
+                            "source": "claude_usage_command",
+                            "command": "claude -p /usage --output-format json",
+                        },
+                    )
+                )
+                continue
+
             age_seconds = time.time() - reading.updated_utc
             quality = DataQuality.VERIFIED
             reason = None
             if age_seconds > _STALE_AFTER_SECONDS:
                 quality = DataQuality.STALE
-                reason = f"Last observed {int(age_seconds // 3600)}h ago; source may be inactive."
+                age_minutes = max(1, int(age_seconds // 60))
+                if age_minutes >= 60:
+                    age_text = f"{age_minutes // 60}h ago"
+                else:
+                    age_text = f"{age_minutes}m ago"
+                reason = (
+                    f"Last observed {age_text}; Claude statusline has not reported newer data."
+                )
 
             used_percent = reading.used_percentage
             remaining_percent = None
@@ -129,7 +197,7 @@ class ClaudeProviderAdapter:
                     provider=self.provider_name,
                     profile_id=profile.profile_id,
                     window_id=reading.window_name,
-                    window_label=WINDOW_LABELS.get(reading.window_name, reading.window_name),
+                    window_label=WINDOW_LABELS.get(reading.window_name) or reading.window_name,
                     used_percent=used_percent,
                     remaining_percent=remaining_percent,
                     resets_at_utc=reading.resets_at_utc,
@@ -141,6 +209,8 @@ class ClaudeProviderAdapter:
                         "prev_percentage": reading.prev_percentage,
                         "prev_resets_at": reading.prev_resets_at,
                         "source": "claude_usage_notifier_db",
+                        "usage_command_ok": usage_command.ok if usage_command else None,
+                        "usage_command_reason": usage_command.reason if usage_command else None,
                     },
                 )
             )

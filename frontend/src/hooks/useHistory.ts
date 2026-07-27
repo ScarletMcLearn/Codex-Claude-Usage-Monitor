@@ -11,5 +11,6 @@ export function useHistory(params: {
   return useQuery({
     queryKey: ['history', params],
     queryFn: () => api.history(params),
+    refetchInterval: 15_000,
   })
 }

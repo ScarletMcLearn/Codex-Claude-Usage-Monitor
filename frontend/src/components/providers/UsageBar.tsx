@@ -53,7 +53,7 @@ export function UsageBar({
           style={{ width: `${width}%` }}
         />
       </div>
-      {quality === 'unavailable' && unavailableReason && (
+      {(quality === 'unavailable' || quality === 'stale') && unavailableReason && (
         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{unavailableReason}</p>
       )}
     </div>

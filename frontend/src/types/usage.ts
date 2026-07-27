@@ -111,6 +111,22 @@ export interface ProfileDiagnostics {
   notifier_db_reason: string | null
 }
 
+export interface UsageReportRow {
+  profile_key: string
+  provider: Provider
+  label: string
+  ok: boolean
+  source: string
+  message: string
+  limits: UsageLimit[]
+}
+
+export interface UsageReport {
+  generated_at_utc: string
+  profiles_checked: number
+  rows: UsageReportRow[]
+}
+
 export function levelForPercent(pct: number | null, quality: DataQuality): UsageLevel {
   if (pct === null || quality === 'unavailable') return 'unknown'
   if (pct >= 100) return 'exhausted'

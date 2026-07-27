@@ -44,6 +44,41 @@ def test_refresh_all_and_summary(client):
     assert "generated_at_utc" in body
 
 
+def test_summary_does_not_fetch_live_usage(client, monkeypatch):
+    client.post("/api/discovery/refresh")
+    client.post("/api/refresh-all")
+
+    def fail_fetch(_profile):
+        raise AssertionError("summary must read persisted snapshots, not probe providers")
+
+    for adapter in client.app.state.discovery_service.adapters.values():
+        monkeypatch.setattr(adapter, "fetch_usage", fail_fetch)
+
+    r = client.get("/api/summary")
+
+    assert r.status_code == 200
+    assert "total_profiles" in r.json()
+
+
+def test_usage_report_queries_without_persisting_snapshots(tmp_data_dir, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODEX_MONITOR_FAKE_ADAPTERS", "1")
+    from claude_codex_monitor.app import create_app
+
+    app = create_app(enable_lifespan=False)
+    client = TestClient(app)
+    before = app.state.store.count_snapshots()
+
+    r = client.post("/api/usage-report")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["profiles_checked"] == 3
+    assert app.state.store.count_snapshots() == before
+    claude_row = next(row for row in body["rows"] if row["provider"] == "claude")
+    assert claude_row["source"] == "claude /usage live command"
+    assert claude_row["message"] == "Live provider query completed."
+
+
 def test_settings_get_and_patch(client):
     r = client.get("/api/settings")
     assert r.status_code == 200

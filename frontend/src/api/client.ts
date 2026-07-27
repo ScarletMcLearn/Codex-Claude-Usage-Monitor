@@ -5,6 +5,7 @@ import type {
   ProfileStatus,
   Settings,
   Summary,
+  UsageReport,
   UsageLimit,
 } from '../types/usage'
 
@@ -20,6 +21,7 @@ class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
     ...init,
   })
@@ -52,6 +54,7 @@ export const api = {
       '/refresh-all',
       { method: 'POST' }
     ),
+  usageReport: () => request<UsageReport>('/usage-report', { method: 'POST' }),
   profileLimits: (profileKey: string) =>
     request<UsageLimit[]>(`/profiles/${encodeURIComponent(profileKey)}/limits`),
   history: (params: {
