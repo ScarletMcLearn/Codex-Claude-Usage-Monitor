@@ -83,3 +83,61 @@ def test_current_limits_normalizes_old_codex_duration_labels(store):
     limits = service.get_current_limits(profile_key)
 
     assert limits[0].window_label == "7-day"
+
+
+def test_current_limits_ignores_oldest_history_limit(store):
+    history = HistoryService(store)
+    service = UsageService(store, None, history, None, None)  # type: ignore[arg-type]
+    profile_key = "claude:c:\\users\\getra\\.claude"
+    start = datetime(2026, 7, 1, 0, 0, tzinfo=UTC)
+
+    for i in range(1001):
+        history.record(
+            profile_key,
+            _limit(
+                window_id="five_hour",
+                window_label="5-hour",
+                quality=DataQuality.VERIFIED,
+                used_percent=78.0,
+                observed_at_utc=start + timedelta(minutes=i),
+            ),
+        )
+    history.record(
+        profile_key,
+        _limit(
+            window_id="five_hour",
+            window_label="5-hour",
+            quality=DataQuality.VERIFIED,
+            used_percent=100.0,
+            observed_at_utc=start + timedelta(minutes=1002),
+        ),
+    )
+
+    limits = service.get_current_limits(profile_key)
+
+    assert len(limits) == 1
+    assert limits[0].used_percent == 100.0
+
+
+def test_current_limits_returns_latest_row_per_window(store):
+    history = HistoryService(store)
+    service = UsageService(store, None, history, None, None)  # type: ignore[arg-type]
+    profile_key = "antigravity:c:\\users\\getra\\.gemini\\config\\projects::project:default-cli-project"
+    observed = datetime(2026, 7, 27, 16, 57, tzinfo=UTC)
+
+    for _ in range(3):
+        history.record(
+            profile_key,
+            _limit(
+                window_id="gemini_models_weekly_limit",
+                window_label="Gemini Models: Weekly Limit",
+                quality=DataQuality.VERIFIED,
+                used_percent=0.0,
+                observed_at_utc=observed,
+            ),
+        )
+
+    limits = service.get_current_limits(profile_key)
+
+    assert len(limits) == 1
+    assert limits[0].window_id == "gemini_models_weekly_limit"

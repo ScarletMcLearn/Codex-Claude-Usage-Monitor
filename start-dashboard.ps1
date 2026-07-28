@@ -1,5 +1,7 @@
 [CmdletBinding()]
 param(
+    [switch]$On,
+    [switch]$Off,
     [switch]$Rebuild,
     [switch]$NoBrowser,
     [int]$Port = 8787
@@ -18,6 +20,23 @@ function Write-Step {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+function Stop-DashboardOnPort {
+    param([int]$Port)
+
+    $connections = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    $pids = @($connections | Select-Object -ExpandProperty OwningProcess -Unique)
+    if ($pids.Count -eq 0) {
+        Write-Host "Claude & Codex Usage Monitor is not running on http://127.0.0.1:$Port." -ForegroundColor Yellow
+        return
+    }
+
+    foreach ($processId in $pids) {
+        Write-Step "Stopping process $processId listening on http://127.0.0.1:$Port ..."
+        Stop-Process -Id $processId -Force -ErrorAction Stop
+    }
+    Write-Host "Claude & Codex Usage Monitor stopped on port $Port." -ForegroundColor Green
+}
+
 function Assert-CommandOnPath {
     param([string]$Name, [string]$InstallHint)
     $cmd = Get-Command $Name -ErrorAction SilentlyContinue
@@ -26,6 +45,16 @@ function Assert-CommandOnPath {
         exit 1
     }
     return $cmd
+}
+
+if ($On -and $Off) {
+    Write-Error 'Use either -On or -Off, not both.'
+    exit 1
+}
+
+if ($Off) {
+    Stop-DashboardOnPort -Port $Port
+    exit 0
 }
 
 # ---------------------------------------------------------------------------

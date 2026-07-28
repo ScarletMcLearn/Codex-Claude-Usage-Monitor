@@ -73,7 +73,11 @@ class Store:
                 "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', ?)",
                 (str(SCHEMA_VERSION),),
             )
-            for provider, name in (("claude", "Claude Code"), ("codex", "Codex")):
+            for provider, name in (
+                ("claude", "Claude Code"),
+                ("codex", "Codex"),
+                ("antigravity", "Antigravity"),
+            ):
                 connection.execute(
                     "INSERT OR IGNORE INTO providers (provider, display_name) VALUES (?, ?)",
                     (provider, name),
@@ -269,6 +273,37 @@ class Store:
         params.append(limit)
         with self._connect() as connection:
             rows = connection.execute(" ".join(query), params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_latest_snapshot_batch(self, profile_key: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT s.*,
+                    COALESCE(p.provider, substr(s.profile_key, 1, instr(s.profile_key, ':') - 1)) as provider,
+                    p.label as profile_label,
+                    p.friendly_name
+                FROM usage_snapshots s
+                LEFT JOIN profiles p ON p.profile_key = s.profile_key
+                WHERE s.profile_key = ?
+                    AND s.observed_at_utc = (
+                        SELECT MAX(s3.observed_at_utc)
+                        FROM usage_snapshots s3
+                        WHERE s3.profile_key = s.profile_key
+                    )
+                    AND s.id = (
+                        SELECT s2.id
+                        FROM usage_snapshots s2
+                        WHERE s2.profile_key = s.profile_key
+                            AND s2.window_id = s.window_id
+                            AND s2.observed_at_utc = s.observed_at_utc
+                        ORDER BY s2.observed_at_utc DESC, s2.id DESC
+                        LIMIT 1
+                    )
+                ORDER BY s.window_id
+                """,
+                (profile_key,),
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def count_snapshots(self) -> int:

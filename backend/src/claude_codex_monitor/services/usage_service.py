@@ -115,12 +115,8 @@ class UsageService:
     def get_current_limits(self, profile_key: str) -> list[UsageLimit]:
         """Return the latest known reading per window for a profile, without
         forcing a new fetch (used by GET endpoints)."""
-        rows = self._store.get_history(profile_key=profile_key, limit=1000)
-        if not rows:
-            return []
-
-        latest_observed = max(row["observed_at_utc"] for row in rows)
-        return [_row_to_usage_limit(row) for row in rows if row["observed_at_utc"] == latest_observed]
+        rows = self._store.get_latest_snapshot_batch(profile_key)
+        return [_row_to_usage_limit(row) for row in rows]
 
 
 def _row_to_usage_limit(row: dict[str, Any]) -> UsageLimit:

@@ -153,3 +153,54 @@ class FakeCodexAdapter:
             current_error=str(error) if error else None,
             suggested_action="This is fake/demo data (CLAUDE_CODEX_MONITOR_FAKE_ADAPTERS=1).",
         )
+
+
+class FakeAntigravityAdapter:
+    provider_name = "antigravity"
+
+    def discover_profiles(self) -> list[ProfileStatus]:
+        return [
+            ProfileStatus(
+                provider="antigravity",
+                profile_id="fake-antigravity-default",
+                profile_key="antigravity:fake-antigravity-default",
+                label="default",
+                sanitized_source="~/.gemini/antigravity-cli",
+                discovery_source="default cli home",
+            )
+        ]
+
+    def validate_profile(self, profile: ProfileStatus) -> tuple[bool, str]:
+        return True, "fake profile"
+
+    def fetch_usage(self, profile: ProfileStatus) -> Any:
+        return {"profile_id": profile.profile_id}
+
+    def parse_usage(self, profile: ProfileStatus, raw: Any) -> list[UsageLimit]:
+        now = datetime.now(UTC)
+        return [
+            UsageLimit(
+                provider="antigravity",
+                profile_id=profile.profile_id,
+                window_id="unknown",
+                window_label="Usage",
+                quality=DataQuality.UNAVAILABLE,
+                unavailable_reason="Fake Antigravity profile: live quota unavailable (demo data).",
+                observed_at_utc=now,
+            )
+        ]
+
+    def get_account_metadata(self, profile: ProfileStatus) -> dict[str, Any]:
+        return {}
+
+    def diagnose_error(self, profile: ProfileStatus, error) -> ProfileDiagnostics:
+        return ProfileDiagnostics(
+            provider="antigravity",
+            profile_id=profile.profile_id,
+            profile_key=profile.profile_key,
+            discovery_source=profile.discovery_source,
+            sanitized_config_path=profile.sanitized_source,
+            parser_used="fake_adapter",
+            current_error=str(error) if error else None,
+            suggested_action="This is fake/demo data (CLAUDE_CODEX_MONITOR_FAKE_ADAPTERS=1).",
+        )

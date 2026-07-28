@@ -1,6 +1,6 @@
 // Mirrors backend/src/claude_codex_monitor/models/*.py - keep in sync.
 
-export type Provider = 'claude' | 'codex'
+export type Provider = 'claude' | 'codex' | 'antigravity'
 
 export type DataQuality = 'verified' | 'derived' | 'estimated' | 'stale' | 'unavailable'
 

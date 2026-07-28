@@ -12,7 +12,7 @@ export function ProviderSection({
   onOpenDiagnostics,
   refreshingKey,
 }: {
-  provider: 'claude' | 'codex'
+  provider: 'claude' | 'codex' | 'antigravity'
   title: string
   profiles: ProfileStatus[]
   limitsByProfile: Record<string, UsageLimit[]>
@@ -28,7 +28,9 @@ export function ProviderSection({
         className={
           provider === 'claude'
             ? 'text-lg font-semibold text-orange-700 dark:text-orange-400'
-            : 'text-lg font-semibold text-teal-700 dark:text-teal-400'
+            : provider === 'codex'
+              ? 'text-lg font-semibold text-teal-700 dark:text-teal-400'
+              : 'text-lg font-semibold text-blue-700 dark:text-blue-400'
         }
       >
         {title}

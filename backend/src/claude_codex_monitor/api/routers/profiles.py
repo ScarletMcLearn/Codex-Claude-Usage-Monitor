@@ -67,7 +67,9 @@ def usage_report(
     Codex supports a live usage probe through `codex app-server --stdio`.
     Claude is probed through `/usage`; if that output has no parseable
     5-hour/7-day percentages, the report falls back to the latest statusline
-    payload captured by the notifier DB.
+    payload captured by the notifier DB. Antigravity profiles are discovered,
+    but automatic print-mode `/usage` probing is disabled by default because
+    it creates normal Antigravity turns instead of opening the slash panel.
     """
 
     profiles = discovery_service.discover_all()
@@ -90,11 +92,11 @@ def usage_report(
             )
             continue
 
-        source = (
-            "codex app-server live probe"
-            if profile.provider == "codex"
-            else "claude /usage live command"
-        )
+        source = {
+            "claude": "claude /usage live command",
+            "codex": "codex app-server live probe",
+            "antigravity": "antigravity /usage live command",
+        }.get(profile.provider, f"{profile.provider} live probe")
 
         try:
             raw = adapter.fetch_usage(profile)

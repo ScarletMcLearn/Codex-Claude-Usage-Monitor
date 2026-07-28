@@ -63,7 +63,15 @@ export function ProfileCard({
   const providerAccent =
     profile.provider === 'claude'
       ? 'border-l-4 border-l-orange-500'
-      : 'border-l-4 border-l-teal-500'
+      : profile.provider === 'codex'
+        ? 'border-l-4 border-l-teal-500'
+        : 'border-l-4 border-l-blue-500'
+  const providerText =
+    profile.provider === 'claude'
+      ? 'text-orange-600 dark:text-orange-400'
+      : profile.provider === 'codex'
+        ? 'text-teal-600 dark:text-teal-400'
+        : 'text-blue-600 dark:text-blue-400'
 
   return (
     <div
@@ -80,9 +88,7 @@ export function ProfileCard({
             <span
               className={clsx(
                 'text-xs font-semibold uppercase tracking-wide',
-                profile.provider === 'claude'
-                  ? 'text-orange-600 dark:text-orange-400'
-                  : 'text-teal-600 dark:text-teal-400'
+                providerText
               )}
             >
               {profile.provider}

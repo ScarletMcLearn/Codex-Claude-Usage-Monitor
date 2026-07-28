@@ -5,5 +5,6 @@ export function useSettings() {
   return useQuery({
     queryKey: ['settings'],
     queryFn: api.getSettings,
+    refetchInterval: 15_000,
   })
 }

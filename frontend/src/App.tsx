@@ -17,6 +17,7 @@ import type { ProfileStatus, UsageLimit, UsageReport } from './types/usage'
 
 let initialRefreshStartedForSession = false
 const RESET_REFRESH_BUFFER_MS = 5_000
+const RESET_REFRESH_RETRY_MS = 30_000
 
 function useAllLimits(profileKeys: string[]) {
   const queries = profileKeys.map((key) => ({
@@ -45,8 +46,11 @@ function isDefaultProfile(profile: ProfileStatus) {
 function cardOrder(profile: ProfileStatus) {
   if (profile.provider === 'claude' && isDefaultProfile(profile)) return 0
   if (profile.provider === 'codex' && isDefaultProfile(profile)) return 1
-  if (isDefaultProfile(profile)) return 2
-  return profile.provider === 'claude' ? 3 : 4
+  if (profile.provider === 'antigravity' && isDefaultProfile(profile)) return 2
+  if (isDefaultProfile(profile)) return 3
+  if (profile.provider === 'claude') return 4
+  if (profile.provider === 'codex') return 5
+  return 6
 }
 
 export default function App() {
@@ -123,7 +127,8 @@ export default function App() {
   }
 
   const initialRefreshStarted = useRef(false)
-  const resetRefreshesStarted = useRef(new Set<string>())
+  const resetRefreshAttempts = useRef(new Map<string, number>())
+  const [resetRefreshTick, setResetRefreshTick] = useState(0)
   useEffect(() => {
     if (
       profilesLoading ||
@@ -167,20 +172,28 @@ export default function App() {
 
   useEffect(() => {
     if (!settings?.auto_refresh_enabled) return
-    const nextResetRefresh = resetRefreshCandidates.find(
-      (item) => !resetRefreshesStarted.current.has(item.value)
-    )
+    const candidateValues = new Set(resetRefreshCandidates.map((item) => item.value))
+    for (const value of resetRefreshAttempts.current.keys()) {
+      if (!candidateValues.has(value)) resetRefreshAttempts.current.delete(value)
+    }
+
+    const now = Date.now()
+    const nextResetRefresh = resetRefreshCandidates[0]
     if (!nextResetRefresh) return
 
-    const delay = Math.max(0, nextResetRefresh.time + RESET_REFRESH_BUFFER_MS - Date.now())
+    const targetDelay = nextResetRefresh.time + RESET_REFRESH_BUFFER_MS - now
+    const lastAttempt = resetRefreshAttempts.current.get(nextResetRefresh.value)
+    const retryDelay = lastAttempt === undefined ? 0 : lastAttempt + RESET_REFRESH_RETRY_MS - now
+    const delay = Math.max(0, targetDelay, retryDelay)
+
     const timeoutId = window.setTimeout(() => {
-      resetRefreshesStarted.current.add(nextResetRefresh.value)
-      void handleRefreshAll()
+      resetRefreshAttempts.current.set(nextResetRefresh.value, Date.now())
+      void handleRefreshAll().finally(() => setResetRefreshTick((tick) => tick + 1))
     }, delay)
 
     return () => window.clearTimeout(timeoutId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resetRefreshCandidates, settings?.auto_refresh_enabled])
+  }, [resetRefreshCandidates, resetRefreshTick, settings?.auto_refresh_enabled])
 
   if (profilesLoading) {
     return (
@@ -227,7 +240,7 @@ export default function App() {
         {(profiles ?? []).length === 0 ? (
           <EmptyState
             title="No profiles discovered yet"
-            description="Click Refresh all, or check that Claude Code / Codex CLI are installed on this machine."
+            description="Click Refresh all, or check that Claude Code, Codex CLI, or Antigravity are installed on this machine."
           />
         ) : (
           <section aria-labelledby="section-profiles" className="space-y-3">

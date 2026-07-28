@@ -22,7 +22,7 @@ def test_providers(client):
     r = client.get("/api/providers")
     assert r.status_code == 200
     names = {p["provider"] for p in r.json()}
-    assert names == {"claude", "codex"}
+    assert names == {"claude", "codex", "antigravity"}
 
 
 def test_discovery_and_profiles(client):
@@ -72,7 +72,7 @@ def test_usage_report_queries_without_persisting_snapshots(tmp_data_dir, monkeyp
 
     assert r.status_code == 200
     body = r.json()
-    assert body["profiles_checked"] == 3
+    assert body["profiles_checked"] == 4
     assert app.state.store.count_snapshots() == before
     claude_row = next(row for row in body["rows"] if row["provider"] == "claude")
     assert claude_row["source"] == "claude /usage live command"

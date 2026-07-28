@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC
 
+from ..adapters.antigravity_adapter import AntigravityProviderAdapter
 from ..adapters.base import ProviderAdapter
 from ..adapters.claude_adapter import ClaudeProviderAdapter
 from ..adapters.codex_adapter import CodexProviderAdapter
@@ -20,14 +21,20 @@ class DiscoveryService:
         store: Store,
         claude_adapter: ProviderAdapter | None = None,
         codex_adapter: ProviderAdapter | None = None,
+        antigravity_adapter: ProviderAdapter | None = None,
     ) -> None:
         self._store = store
         self.claude_adapter: ProviderAdapter = claude_adapter or ClaudeProviderAdapter()
         self.codex_adapter: ProviderAdapter = codex_adapter or CodexProviderAdapter()
+        self.antigravity_adapter: ProviderAdapter = antigravity_adapter or AntigravityProviderAdapter()
 
     @property
     def adapters(self) -> dict[str, ProviderAdapter]:
-        return {"claude": self.claude_adapter, "codex": self.codex_adapter}
+        return {
+            "claude": self.claude_adapter,
+            "codex": self.codex_adapter,
+            "antigravity": self.antigravity_adapter,
+        }
 
     def discover_all(self) -> list[ProfileStatus]:
         discovered: list[ProfileStatus] = []

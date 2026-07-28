@@ -1,8 +1,8 @@
 # Claude & Codex Usage Monitor
 
-A local, single-page dashboard that auto-discovers every Claude Code and
-OpenAI Codex CLI profile on this Windows machine and shows real usage limits,
-history, and forecasts — without ever fabricating a number.
+A local, single-page dashboard that auto-discovers every Claude Code, OpenAI
+Codex CLI, and Google Antigravity profile on this Windows machine and shows
+real usage limits, history, and forecasts — without ever fabricating a number.
 
 Everything runs on `127.0.0.1` only. Nothing leaves the machine.
 
@@ -11,7 +11,10 @@ Everything runs on `127.0.0.1` only. Nothing leaves the machine.
 - Discovers Claude Code profiles (`~/.claude`, `~/.claude-*`, PowerShell
   function-based profile switches like `claude-mt`/`claude-nc`/`claude-personal`)
   and Codex CLI profiles (`~/.codex`, `CODEX_HOME` overrides, named
-  `-p/--profile` sub-configs).
+  `-p/--profile` sub-configs), and Antigravity profiles/projects
+  (`~/.gemini/antigravity-cli`, `~/.gemini/antigravity`, app-data homes,
+  env/PowerShell overrides, Chromium-style `Default`/`Profile *` dirs, and
+  `~/.gemini/config/projects/*.json`).
 - Shows current usage per limit window (used/remaining %, reset time, live
   countdown), historical charts, a simple exhaustion forecast, and clearly
   flags stale/unreachable/unauthenticated profiles.
@@ -48,6 +51,9 @@ Everything runs on `127.0.0.1` only. Nothing leaves the machine.
 |    CodexProviderAdapter   -> vendor/codex_appserver/*          |
 |      (self-contained discovery; spawns `codex app-server       |
 |       --stdio` live per profile, isolated env, timeout)       |
+|    AntigravityProviderAdapter -> vendor/antigravity/*           |
+|      (self-contained discovery; interactive `/usage` panel not  |
+|       auto-probed by default to avoid burning turns)            |
 |                                                                |
 |  db: SQLite (own history.sqlite3), WAL mode                   |
 +-----------------------------------------------------------------+
@@ -63,8 +69,10 @@ flowchart TD
     Services --> Scheduler["Background scheduler (asyncio)"]
     Services --> ClaudeAdapter["ClaudeProviderAdapter"]
     Services --> CodexAdapter["CodexProviderAdapter"]
+    Services --> AntigravityAdapter["AntigravityProviderAdapter"]
     ClaudeAdapter -->|read-only| NotifierDB[("%LOCALAPPDATA%\\ClaudeUsageNotifier\\state\\usage_state.sqlite3")]
     CodexAdapter -->|spawn, isolated env, timeout| CodexAppServer["codex app-server --stdio"]
+    AntigravityAdapter -->|discover only by default| AntigravityData["~/.gemini/antigravity-cli + projects"]
     Services --> OwnDB[("%LOCALAPPDATA%\\ClaudeCodexMonitor\\history.sqlite3")]
 ```
 
@@ -94,6 +102,7 @@ flowchart TD
 |---|---|---|
 | Claude Code | Self-contained (`vendor/claude_statusline/discovery.py`, adapted from the sibling `claude-usage-notifier` project) | Reads the sibling `claude-usage-notifier`'s own SQLite state DB read-only, if that separate tool is installed and has captured statusline data. **This dashboard does not itself register a statusline hook** — see Known limitations. |
 | Codex | Self-contained (`vendor/codex_appserver/discovery.py`, adapted from the sibling `ai_usage_notifier` project) | Live, on-demand: spawns `codex [--profile X] app-server --stdio` and reads `account/rateLimits/read` over JSON-RPC. |
+| Antigravity | Self-contained (`vendor/antigravity/discovery.py`) | Discovers profiles/projects as first-class profiles. Antigravity has an interactive `/usage`/`/quota` panel, but `agy --print /usage` creates a normal Antigravity turn instead of opening that panel, so automatic probing is disabled by default to avoid burning usage. |
 
 ## Data quality labels — what verified/derived/estimated/stale/unavailable mean
 
@@ -139,7 +148,12 @@ pixi run dev-backend       # uvicorn --reload on 127.0.0.1:8787
 pixi run dev-frontend      # vite dev server with /api proxy to 127.0.0.1:8787
 
 # Production-local (single port, single process)
+claude-codex-monitor              # same as -on when shell function is installed
+claude-codex-monitor -on          # start the dashboard
+claude-codex-monitor -off         # stop the dashboard on port 8787
 .\start-dashboard.ps1                 # builds frontend if stale, starts backend, opens browser
+.\start-dashboard.ps1 -On             # explicit start, same behavior as no params
+.\start-dashboard.ps1 -Off            # stop the dashboard on port 8787
 .\start-dashboard.ps1 -Rebuild        # force a frontend rebuild
 .\start-dashboard.ps1 -NoBrowser      # don't open a browser tab
 .\start-dashboard.ps1 -Port 9000      # use a different port
@@ -165,7 +179,15 @@ sub-profiles). A home is credible if it contains `config.toml`, `auth.json`,
 `state_5.sqlite`, `session_index.jsonl`, `version.json`, or any
 `*.config.toml`.
 
-Neither adapter recursively scans the filesystem or a whole drive — only the
+**Antigravity**: default `~/.gemini/antigravity-cli` and
+`~/.gemini/antigravity`, `%APPDATA%\Antigravity`, `%LOCALAPPDATA%\antigravity`
+and `%LOCALAPPDATA%\Antigravity`, likely env overrides
+(`ANTIGRAVITY_HOME`, `ANTIGRAVITY_USER_DATA_DIR`, `ANTIGRAVITY_CONFIG_DIR`),
+PowerShell `--user-data-dir` / `--profile` hints, Chromium-style profile dirs
+(`Default`, `Profile *`) under credible homes, and
+`~/.gemini/config/projects/*.json`.
+
+Adapters do not recursively scan the filesystem or a whole drive — only the
 user home (one level) plus explicitly named locations.
 
 ## How usage sources are determined
@@ -180,6 +202,16 @@ user home (one level) plus explicitly named locations.
 - **Codex**: this dashboard spawns `codex app-server --stdio` itself, live,
   on every refresh, and reads `account/rateLimits/read`. This is real,
   active probing — no separate tool required.
+- **Antigravity**: this dashboard discovers Antigravity profiles/projects.
+  Antigravity has `/usage` and `/quota` in the interactive CLI, but those slash
+  panels are not exposed by `agy --print`; using `agy -p /usage` creates a
+  normal Antigravity turn and returns agent text. To avoid burning quota on
+  every refresh, automatic Antigravity usage probing is disabled by default.
+  The parser understands the interactive `Models & Quota` panel text. For safe
+  monitoring, put copied panel text in `~/.gemini/antigravity-cli/usage.txt`,
+  or set `CCM_ANTIGRAVITY_USAGE_SNAPSHOT` to another text file path. Set
+  `CCM_ANTIGRAVITY_USAGE_COMMAND=1` only if you want to try the experimental
+  print-mode parser.
 
 ## Troubleshooting
 
@@ -193,6 +225,10 @@ user home (one level) plus explicitly named locations.
 - **A Codex profile times out**: the `app-server` probe has an 18s timeout;
   a slow/unresponsive `codex.exe` will surface as an error in Diagnostics,
   not silently as 0%.
+- **An Antigravity profile shows "Unavailable"**: discovery worked, but the
+  interactive `/usage` panel is not available through `agy --print`. Open
+  Antigravity CLI and run `/usage` or `/quota`, then put copied panel text in
+  `~/.gemini/antigravity-cli/usage.txt` if you want the dashboard to parse it.
 - **Dashboard is slow to refresh**: Windows toast notifications
   (`win11toast`) are fired on a background thread so they never block a
   refresh; if you still see slowness, check `refresh_log` via the DB or
@@ -232,8 +268,8 @@ Frontend also has `pnpm lint` (oxlint) and `tsc -b` wired into `pnpm build`.
 
 ## How to disable/remove
 
-- Stop the dashboard (close the terminal running `start-dashboard.ps1`, or
-  `Ctrl+C`).
+- Stop the dashboard: `claude-codex-monitor -off`, `.\start-dashboard.ps1 -Off`,
+  close the terminal running `start-dashboard.ps1`, or press `Ctrl+C`.
 - Delete `%LOCALAPPDATA%\ClaudeCodexMonitor\` to remove all local data
   (history, settings, notification dedup state).
 - Delete this repository directory. Nothing is installed system-wide, no

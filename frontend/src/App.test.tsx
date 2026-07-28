@@ -52,10 +52,26 @@ const profiles: ProfileStatus[] = [
     is_stale: false,
     executable_found: true,
   },
+  {
+    provider: 'antigravity',
+    profile_id: 'antigravity-default',
+    profile_key: 'antigravity:default',
+    label: 'default',
+    friendly_name: null,
+    sanitized_source: '~/.gemini/antigravity-cli',
+    discovery_source: 'default cli home',
+    is_active: true,
+    is_authenticated: null,
+    last_refresh_utc: '2026-07-26T21:10:00Z',
+    last_success_utc: null,
+    last_error: null,
+    is_stale: false,
+    executable_found: true,
+  },
 ]
 
 const summary: Summary = {
-  total_profiles: 3,
+  total_profiles: 4,
   queried_successfully: 3,
   need_auth: 0,
   over_80_percent: 0,
@@ -84,7 +100,7 @@ const settings = (autoRefresh: boolean): Settings => ({
 
 async function renderApp(autoRefresh = true, summaryOverride: Partial<Summary> = {}) {
   vi.resetModules()
-  const refreshAll = vi.fn().mockResolvedValue({ profiles_refreshed: 3, results: {} })
+  const refreshAll = vi.fn().mockResolvedValue({ profiles_refreshed: 4, results: {} })
   const mockedSummary = { ...summary, ...summaryOverride }
   const usageReport = vi.fn().mockResolvedValue({
     generated_at_utc: '2026-07-26T22:05:00Z',
@@ -177,21 +193,36 @@ describe('App refresh orchestration', () => {
     await waitFor(() => expect(refreshAll).toHaveBeenCalledTimes(2))
   })
 
+  it('keeps retrying overdue reset refreshes until the reset time changes', async () => {
+    vi.setSystemTime(new Date('2026-07-26T21:59:50Z'))
+    const { refreshAll } = await renderApp(true, {
+      next_reset_utc: '2026-07-26T22:00:00Z',
+    })
+    await waitFor(() => expect(refreshAll).toHaveBeenCalledTimes(1))
+
+    vi.advanceTimersByTime(15_000)
+    await waitFor(() => expect(refreshAll).toHaveBeenCalledTimes(2))
+
+    vi.advanceTimersByTime(30_000)
+    await waitFor(() => expect(refreshAll).toHaveBeenCalledTimes(3))
+  })
+
   it('shows latest real profile refresh time, not summary generation time', async () => {
     await renderApp(true)
 
-    expect(await screen.findByText('Last refresh: 2026-07-26T21:05:00Z')).toBeInTheDocument()
+    expect(await screen.findByText('Last refresh: 2026-07-26T21:10:00Z')).toBeInTheDocument()
     expect(screen.queryByText('Last refresh: 2026-07-26T22:00:00Z')).not.toBeInTheDocument()
   })
 
-  it('puts Claude default first and Codex default second', async () => {
+  it('puts Claude, Codex, then Antigravity defaults first', async () => {
     await renderApp(true)
 
     const cards = await screen.findAllByTestId('profile-card')
 
-    expect(cards.map((card) => card.dataset.profileKey).slice(0, 2)).toEqual([
+    expect(cards.map((card) => card.dataset.profileKey).slice(0, 3)).toEqual([
       'claude:default',
       'codex:default',
+      'antigravity:default',
     ])
   })
 
