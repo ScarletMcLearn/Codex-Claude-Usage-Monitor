@@ -156,6 +156,8 @@ claude-codex-monitor -off         # stop the dashboard on port 8787
 .\start-dashboard.ps1 -Off            # stop the dashboard on port 8787
 .\start-dashboard.ps1 -Rebuild        # force a frontend rebuild
 .\start-dashboard.ps1 -NoBrowser      # don't open a browser tab
+.\start-dashboard.ps1 -NoRestart      # exit instead of auto-restarting backend
+.\start-dashboard.ps1 -RestartDelaySeconds 10  # wait longer between restarts
 .\start-dashboard.ps1 -Port 9000      # use a different port
 ```
 

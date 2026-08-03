@@ -28,6 +28,9 @@ def _candidate_key(c: AntigravityProfileCandidate) -> str:
     return base
 
 
+_SNAPSHOT_STALE_AFTER_SECONDS = 10 * 60
+
+
 class AntigravityProviderAdapter:
     provider_name = "antigravity"
 
@@ -132,28 +135,46 @@ class AntigravityProviderAdapter:
                 )
             ]
 
-        return [
-            UsageLimit(
-                provider=self.provider_name,
-                profile_id=profile.profile_id,
-                window_id=window.window_name,
-                window_label=window.window_label,
-                used_percent=window.used_percentage,
-                remaining_percent=max(0.0, 100.0 - window.used_percentage),
-                reset_confirmed=False,
-                quality=DataQuality.VERIFIED,
-                observed_at_utc=datetime.fromtimestamp(window.updated_utc, tz=UTC),
-                source_detail={
-                    "source": raw.get("source") or "antigravity_usage_command",
-                    "command": (
-                        "agy -p /usage --output-format json"
-                        if raw.get("source") != "antigravity_usage_snapshot"
-                        else "usage snapshot text file"
-                    ),
-                },
+        source = raw.get("source") or "antigravity_usage_command"
+        results: list[UsageLimit] = []
+        for window in raw.get("windows", []):
+            observed_at = datetime.fromtimestamp(window.updated_utc, tz=UTC)
+            quality = DataQuality.VERIFIED
+            reason = None
+            snapshot_age = None
+            if source == "antigravity_usage_snapshot":
+                snapshot_age = max(0, int(now.timestamp() - window.updated_utc))
+                if snapshot_age > _SNAPSHOT_STALE_AFTER_SECONDS:
+                    quality = DataQuality.STALE
+                    reason = f"Manual Antigravity usage snapshot last updated {_format_age(snapshot_age)} ago."
+
+            results.append(
+                UsageLimit(
+                    provider=self.provider_name,
+                    profile_id=profile.profile_id,
+                    window_id=window.window_name,
+                    window_label=window.window_label,
+                    used_percent=window.used_percentage,
+                    remaining_percent=max(0.0, 100.0 - window.used_percentage),
+                    reset_confirmed=False,
+                    quality=quality,
+                    unavailable_reason=reason,
+                    observed_at_utc=observed_at,
+                    source_detail={
+                        "source": source,
+                        "command": (
+                            "agy -p /usage --output-format json"
+                            if source != "antigravity_usage_snapshot"
+                            else "usage snapshot text file"
+                        ),
+                        "snapshot_age_seconds": snapshot_age,
+                        "snapshot_path_source": "CCM_ANTIGRAVITY_USAGE_SNAPSHOT"
+                        if os.environ.get("CCM_ANTIGRAVITY_USAGE_SNAPSHOT")
+                        else "default_home_usage_txt",
+                    },
+                )
             )
-            for window in raw.get("windows", [])
-        ]
+        return results
 
     def get_account_metadata(self, profile: ProfileStatus) -> dict[str, Any]:
         return {}
@@ -183,3 +204,15 @@ class AntigravityProviderAdapter:
 
 def _display_snapshot_path() -> str:
     return sanitize_path(str(usage_snapshot_path()))
+
+
+def _format_age(seconds: int) -> str:
+    if seconds < 120:
+        return "1m"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours}h"
+    return f"{hours // 24}d"

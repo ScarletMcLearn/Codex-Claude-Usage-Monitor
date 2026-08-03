@@ -208,10 +208,19 @@ describe('App refresh orchestration', () => {
   })
 
   it('shows latest real profile refresh time, not summary generation time', async () => {
+    vi.setSystemTime(new Date('2026-07-26T21:11:00Z'))
     await renderApp(true)
 
     expect(await screen.findByText('Last refresh: 2026-07-26T21:10:00Z')).toBeInTheDocument()
     expect(screen.queryByText('Last refresh: 2026-07-26T22:00:00Z')).not.toBeInTheDocument()
+  })
+
+  it('warns when cached refresh data is stale', async () => {
+    vi.setSystemTime(new Date('2026-07-26T21:30:00Z'))
+    await renderApp(true)
+
+    expect(await screen.findByText('Last refresh: 2026-07-26T21:10:00Z (stale)')).toBeInTheDocument()
+    expect(screen.getByTestId('health-indicator')).toHaveTextContent('Needs attention')
   })
 
   it('puts Claude, Codex, then Antigravity defaults first', async () => {

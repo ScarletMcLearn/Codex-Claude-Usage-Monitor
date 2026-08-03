@@ -117,7 +117,9 @@ export function ProfileCard({
 
       <div className="space-y-3">
         {limits.length === 0 ? (
-          <p className="text-sm text-slate-500 dark:text-slate-400">No usage data yet.</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            No usage snapshots captured yet. Refresh this profile to query provider usage.
+          </p>
         ) : (
           limits.map((limit) => (
             <div

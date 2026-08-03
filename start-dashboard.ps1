@@ -4,6 +4,8 @@ param(
     [switch]$Off,
     [switch]$Rebuild,
     [switch]$NoBrowser,
+    [switch]$NoRestart,
+    [int]$RestartDelaySeconds = 5,
     [int]$Port = 8787
 )
 
@@ -47,6 +49,19 @@ function Assert-CommandOnPath {
     return $cmd
 }
 
+function Invoke-PixiRun {
+    param([string]$Task)
+
+    Push-Location $RepoRoot
+    try {
+        & pixi run $Task
+        return $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
+}
+
 if ($On -and $Off) {
     Write-Error 'Use either -On or -Off, not both.'
     exit 1
@@ -72,8 +87,8 @@ Write-Host 'All required tools found.' -ForegroundColor Green
 # 2. Sync backend Python environment (pixi task wraps `uv sync`).
 # ---------------------------------------------------------------------------
 Write-Step 'Syncing backend Python environment (pixi run sync)...'
-& pixi run sync
-if ($LASTEXITCODE -ne 0) { Write-Error 'Backend dependency sync failed.'; exit 1 }
+$exitCode = Invoke-PixiRun -Task 'sync'
+if ($exitCode -ne 0) { Write-Error 'Backend dependency sync failed.'; exit 1 }
 
 # ---------------------------------------------------------------------------
 # 3. Build the frontend if missing, stale, or -Rebuild was passed.
@@ -95,12 +110,12 @@ function Test-FrontendStale {
 
 if (Test-FrontendStale) {
     Write-Step 'Installing frontend dependencies (pixi run install-frontend)...'
-    & pixi run install-frontend
-    if ($LASTEXITCODE -ne 0) { Write-Error 'Frontend dependency install failed.'; exit 1 }
+    $exitCode = Invoke-PixiRun -Task 'install-frontend'
+    if ($exitCode -ne 0) { Write-Error 'Frontend dependency install failed.'; exit 1 }
 
     Write-Step 'Building frontend (pixi run build-frontend)...'
-    & pixi run build-frontend
-    if ($LASTEXITCODE -ne 0) { Write-Error 'Frontend build failed.'; exit 1 }
+    $exitCode = Invoke-PixiRun -Task 'build-frontend'
+    if ($exitCode -ne 0) { Write-Error 'Frontend build failed.'; exit 1 }
 
     Write-Step 'Copying built frontend into backend static directory...'
     if (Test-Path $StaticDir) {
@@ -120,17 +135,19 @@ if (Test-FrontendStale) {
 # ---------------------------------------------------------------------------
 # 4. Start the backend (serves API + built frontend on the same port).
 # ---------------------------------------------------------------------------
-Write-Step "Starting backend on http://127.0.0.1:$Port ..."
-# Always go through `pixi run ...` (never call uv/pnpm binaries directly) -
-# the `serve` task wraps `uv run uvicorn ... --host 127.0.0.1 --port $CCM_PORT`.
-$env:CCM_PORT = "$Port"
-$backendProcess = Start-Process -FilePath 'pixi' -ArgumentList @('run', 'serve') `
-    -WorkingDirectory $RepoRoot -PassThru -NoNewWindow
+$backendProcess = $null
+$browserOpened = $false
 
-$cleanupDone = $false
+function Start-Backend {
+    Write-Step "Starting backend on http://127.0.0.1:$Port ..."
+    # Always go through `pixi run ...` (never call uv/pnpm binaries directly) -
+    # the `serve` task wraps `uv run uvicorn ... --host 127.0.0.1 --port $CCM_PORT`.
+    $env:CCM_PORT = "$Port"
+    return Start-Process -FilePath 'pixi' -ArgumentList @('run', 'serve') `
+        -WorkingDirectory $RepoRoot -PassThru -NoNewWindow
+}
+
 function Stop-Backend {
-    if ($cleanupDone) { return }
-    $script:cleanupDone = $true
     if ($backendProcess -and -not $backendProcess.HasExited) {
         Write-Step 'Stopping backend process...'
         try {
@@ -142,53 +159,74 @@ function Stop-Backend {
 }
 
 try {
-    # ---------------------------------------------------------------------
-    # 5. Poll /api/health until 200 (or the process dies / times out).
-    # ---------------------------------------------------------------------
-    Write-Step 'Waiting for backend health check...'
-    $healthUrl = "http://127.0.0.1:$Port/api/health"
-    $deadline = (Get-Date).AddSeconds(30)
-    $healthy = $false
-    while ((Get-Date) -lt $deadline) {
-        if ($backendProcess.HasExited) {
-            Write-Error "Backend process exited early (exit code $($backendProcess.ExitCode)). Check output above."
-            exit 1
+    while ($true) {
+        $backendProcess = Start-Backend
+
+        # -----------------------------------------------------------------
+        # 5. Poll /api/health until 200 (or the process dies / times out).
+        # -----------------------------------------------------------------
+        Write-Step 'Waiting for backend health check...'
+        $healthUrl = "http://127.0.0.1:$Port/api/health"
+        $deadline = (Get-Date).AddSeconds(30)
+        $healthy = $false
+        while ((Get-Date) -lt $deadline) {
+            if ($backendProcess.HasExited) {
+                Write-Warning "Backend process exited early (exit code $($backendProcess.ExitCode)). Check output above."
+                break
+            }
+            try {
+                $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 2
+                if ($response.StatusCode -eq 200) { $healthy = $true; break }
+            } catch {
+                # Not ready yet; retry until deadline.
+            }
+            Start-Sleep -Milliseconds 500
         }
-        try {
-            $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 2
-            if ($response.StatusCode -eq 200) { $healthy = $true; break }
-        } catch {
-            # Not ready yet; retry until deadline.
+
+        if (-not $healthy) {
+            if (-not $backendProcess.HasExited) {
+                Write-Warning "Backend did not become healthy within 30 seconds at $healthUrl."
+                Stop-Backend
+            }
+            if ($NoRestart) { exit 1 }
+            Write-Host "Restarting backend in $RestartDelaySeconds second(s). Press Ctrl+C to stop." -ForegroundColor Yellow
+            Start-Sleep -Seconds $RestartDelaySeconds
+            continue
         }
-        Start-Sleep -Milliseconds 500
+
+        Write-Host "Backend is healthy at $healthUrl" -ForegroundColor Green
+
+        # -------------------------------------------------------------
+        # 6. Open the default browser once (unless -NoBrowser).
+        # -------------------------------------------------------------
+        $dashboardUrl = "http://127.0.0.1:$Port"
+        if (-not $NoBrowser -and -not $browserOpened) {
+            Write-Step "Opening $dashboardUrl in the default browser..."
+            Start-Process $dashboardUrl
+            $browserOpened = $true
+        } elseif ($NoBrowser) {
+            Write-Host "Dashboard is running at $dashboardUrl (browser not opened, -NoBrowser set)." -ForegroundColor Green
+        }
+
+        Write-Host ''
+        Write-Host "Claude & Codex Usage Monitor is running at $dashboardUrl" -ForegroundColor Green
+        if ($NoRestart) {
+            Write-Host 'Press Ctrl+C to stop.' -ForegroundColor Yellow
+        } else {
+            Write-Host 'Press Ctrl+C to stop. If backend exits, it will restart automatically.' -ForegroundColor Yellow
+        }
+
+        # -------------------------------------------------------------
+        # 7. Wait for backend; restart on unexpected exit unless disabled.
+        # -------------------------------------------------------------
+        Wait-Process -Id $backendProcess.Id
+        $exitCode = $backendProcess.ExitCode
+        if ($NoRestart) { break }
+
+        Write-Warning "Backend process exited (exit code $exitCode)."
+        Write-Host "Restarting backend in $RestartDelaySeconds second(s). Press Ctrl+C to stop." -ForegroundColor Yellow
+        Start-Sleep -Seconds $RestartDelaySeconds
     }
-
-    if (-not $healthy) {
-        Write-Error "Backend did not become healthy within 30 seconds at $healthUrl."
-        Stop-Backend
-        exit 1
-    }
-    Write-Host "Backend is healthy at $healthUrl" -ForegroundColor Green
-
-    # -----------------------------------------------------------------
-    # 6. Open the default browser (unless -NoBrowser).
-    # -----------------------------------------------------------------
-    $dashboardUrl = "http://127.0.0.1:$Port"
-    if (-not $NoBrowser) {
-        Write-Step "Opening $dashboardUrl in the default browser..."
-        Start-Process $dashboardUrl
-    } else {
-        Write-Host "Dashboard is running at $dashboardUrl (browser not opened, -NoBrowser set)." -ForegroundColor Green
-    }
-
-    Write-Host ''
-    Write-Host "Claude & Codex Usage Monitor is running at $dashboardUrl" -ForegroundColor Green
-    Write-Host 'Press Ctrl+C to stop.' -ForegroundColor Yellow
-
-    # -----------------------------------------------------------------
-    # 7. Wait for the backend process; ensure clean shutdown on Ctrl+C.
-    # -----------------------------------------------------------------
-    Wait-Process -Id $backendProcess.Id
 }
 finally {
     Stop-Backend

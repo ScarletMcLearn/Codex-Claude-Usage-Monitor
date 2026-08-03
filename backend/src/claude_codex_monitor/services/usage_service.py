@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC
+from datetime import UTC, timedelta
 from typing import Any
 
 from ..db.store import Store
@@ -20,6 +20,7 @@ LOGGER = logging.getLogger("claude_codex_monitor.services.usage")
 # resets on process restart, which is fine since it only drives notification
 # de-dup thresholds, not correctness.
 _consecutive_failures: dict[str, int] = {}
+_CURRENT_READING_STALE_AFTER = timedelta(minutes=10)
 
 
 class UsageService:
@@ -116,7 +117,10 @@ class UsageService:
         """Return the latest known reading per window for a profile, without
         forcing a new fetch (used by GET endpoints)."""
         rows = self._store.get_latest_snapshot_batch(profile_key)
-        return [_row_to_usage_limit(row) for row in rows]
+        if any(_is_real_snapshot(row) for row in rows):
+            rows = [row for row in rows if _is_real_snapshot(row)]
+        profile = self._store.get_profile(profile_key)
+        return [_mark_current_stale_if_needed(_row_to_usage_limit(row), profile) for row in rows]
 
 
 def _row_to_usage_limit(row: dict[str, Any]) -> UsageLimit:
@@ -154,6 +158,67 @@ def _row_to_usage_limit(row: dict[str, Any]) -> UsageLimit:
         observed_at_utc=parse_dt(row["observed_at_utc"]) or datetime.now(UTC),
         source_detail=json.loads(row["source_detail_json"]) if row.get("source_detail_json") else {},
     )
+
+
+def _is_real_snapshot(row: dict[str, Any]) -> bool:
+    return row.get("window_id") != "unknown" or row.get("quality") != DataQuality.UNAVAILABLE.value
+
+
+def _mark_current_stale_if_needed(
+    limit: UsageLimit, profile: dict[str, Any] | None
+) -> UsageLimit:
+    if limit.quality not in (DataQuality.VERIFIED, DataQuality.DERIVED):
+        return limit
+
+    from datetime import datetime
+
+    reasons: list[str] = []
+    now = datetime.now(UTC)
+    age = now - limit.observed_at_utc.astimezone(UTC)
+    if age > _CURRENT_READING_STALE_AFTER:
+        reasons.append(f"Last observed {_format_age(age)} ago.")
+
+    if profile:
+        last_error = profile.get("last_error")
+        last_refresh = _parse_profile_dt(profile.get("last_refresh_utc"))
+        last_success = _parse_profile_dt(profile.get("last_success_utc"))
+        if last_error and (last_success is None or (last_refresh and last_refresh > last_success)):
+            reasons.append(f"Latest refresh failed: {last_error}")
+
+    if not reasons:
+        return limit
+
+    updated = limit.model_copy()
+    updated.quality = DataQuality.STALE
+    updated.unavailable_reason = " ".join(reasons)[:300]
+    return updated
+
+
+def _parse_profile_dt(value: str | None):
+    from datetime import datetime
+
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _format_age(delta: timedelta) -> str:
+    seconds = max(0, int(delta.total_seconds()))
+    if seconds < 120:
+        return "1m"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours}h"
+    return f"{hours // 24}d"
 
 
 def _now():

@@ -60,7 +60,7 @@ describe('ProfileCard', () => {
     expect(screen.getByTestId('reset-countdown')).not.toHaveTextContent('Unknown')
   })
 
-  it('shows "No usage data yet" empty state when limits is empty', () => {
+  it('shows empty state when limits is empty', () => {
     render(
       <ProfileCard
         profile={profile}
@@ -70,7 +70,7 @@ describe('ProfileCard', () => {
         onOpenDiagnostics={vi.fn()}
       />
     )
-    expect(screen.getByText('No usage data yet.')).toBeInTheDocument()
+    expect(screen.getByText(/No usage snapshots captured yet/i)).toBeInTheDocument()
   })
 
   it('calls onRefresh with the profile_key when Refresh is clicked', () => {
@@ -139,5 +139,26 @@ describe('ProfileCard', () => {
     expect(screen.getByTestId('remaining-percent')).toHaveTextContent('—')
     expect(screen.getByTestId('reset-countdown')).toHaveTextContent('Unknown')
     expect(screen.queryByText('0%')).not.toBeInTheDocument()
+  })
+
+  it('shows stale values with stale reason', () => {
+    render(
+      <ProfileCard
+        profile={profile}
+        limits={[
+          {
+            ...limits[0],
+            quality: 'stale',
+            unavailable_reason: 'Last observed 1h ago.',
+          },
+        ]}
+        displayTimeZone="Asia/Dhaka"
+        onRefresh={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('used-percent')).toHaveTextContent('42%')
+    expect(screen.getByText('Stale')).toBeInTheDocument()
+    expect(screen.getByText('Last observed 1h ago.')).toBeInTheDocument()
   })
 })

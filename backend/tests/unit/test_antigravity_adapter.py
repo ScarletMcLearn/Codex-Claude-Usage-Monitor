@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from claude_codex_monitor.adapters.antigravity_adapter import AntigravityProviderAdapter
@@ -42,7 +43,9 @@ def test_usage_command_windows_are_verified():
         {
             "ok": True,
             "windows": [
-                AntigravityUsageCommandWindow("gemini_3_5_flash", "Gemini 3.5 Flash", 64.0, 123.0)
+                AntigravityUsageCommandWindow(
+                    "gemini_3_5_flash", "Gemini 3.5 Flash", 64.0, time.time()
+                )
             ],
         },
     )
@@ -131,3 +134,43 @@ def test_fetch_usage_prefers_manual_snapshot(monkeypatch, tmp_path):
     assert raw["source"] == "antigravity_usage_snapshot"
     assert limits[0].quality == DataQuality.VERIFIED
     assert limits[0].used_percent == 100.0
+
+
+def test_old_manual_snapshot_is_stale(monkeypatch, tmp_path):
+    snapshot = tmp_path / "usage.txt"
+    snapshot.write_text(
+        "GEMINI MODELS\n"
+        "  Weekly Limit\n"
+        "    [██████████████████████████████████████████████████] 100.00%\n"
+        "    Quota available\n",
+        encoding="utf-8",
+    )
+    old = time.time() - 3600
+    import os
+
+    os.utime(snapshot, (old, old))
+    monkeypatch.setenv("CCM_ANTIGRAVITY_USAGE_SNAPSHOT", str(snapshot))
+    adapter = AntigravityProviderAdapter()
+    profile = ProfileStatus(
+        provider="antigravity",
+        profile_id="p",
+        profile_key="antigravity:p",
+        label="default",
+        sanitized_source="~/.gemini/antigravity-cli",
+        discovery_source="default cli home",
+    )
+    adapter._candidates_by_id = {
+        "p": AntigravityProfileCandidate(
+            label="default",
+            kind="default home",
+            config_home=Path("unused"),
+            executable=None,
+        )
+    }
+
+    raw = adapter.fetch_usage(profile)
+    limits = adapter.parse_usage(profile, raw)
+
+    assert limits[0].quality == DataQuality.STALE
+    assert limits[0].used_percent == 0.0
+    assert "Manual Antigravity usage snapshot last updated" in limits[0].unavailable_reason

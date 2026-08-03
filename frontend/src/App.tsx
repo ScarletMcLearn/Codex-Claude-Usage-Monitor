@@ -54,9 +54,13 @@ function cardOrder(profile: ProfileStatus) {
 }
 
 export default function App() {
-  const { data: profiles, isLoading: profilesLoading } = useProfiles()
-  const { data: summary } = useSummary()
-  const { data: settings, isLoading: settingsLoading } = useSettings()
+  const {
+    data: profiles,
+    isLoading: profilesLoading,
+    isError: profilesError,
+  } = useProfiles()
+  const { data: summary, isError: summaryError } = useSummary()
+  const { data: settings, isLoading: settingsLoading, isError: settingsError } = useSettings()
   const settingsMutation = useSettingsMutation()
   const refreshAll = useRefreshAll()
   const refreshProfile = useRefreshProfile()
@@ -69,7 +73,7 @@ export default function App() {
   const [usageReportLoading, setUsageReportLoading] = useState(false)
 
   const profileKeys = useMemo(() => (profiles ?? []).map((p) => p.profile_key), [profiles])
-  const { data: limitsByProfile } = useAllLimits(profileKeys)
+  const { data: limitsByProfile, isError: limitsError } = useAllLimits(profileKeys)
 
   const orderedProfiles = useMemo(
     () =>
@@ -91,13 +95,24 @@ export default function App() {
       Date.parse(value) > Date.parse(latest) ? value : latest
     )
   }, [profiles])
+  const dataStale = useMemo(() => {
+    if (!settings?.auto_refresh_enabled) return false
+    if ((profiles ?? []).length === 0) return false
+    if (!latestRefresh) return true
+    const latestMs = Date.parse(latestRefresh)
+    if (!Number.isFinite(latestMs)) return true
+    const staleAfterMs = Math.max(5 * 60_000, (settings.refresh_interval_seconds ?? 300) * 1_000 * 2)
+    return Date.now() - latestMs > staleAfterMs
+  }, [latestRefresh, profiles, settings?.auto_refresh_enabled, settings?.refresh_interval_seconds])
 
   const health = useMemo<'good' | 'warning' | 'critical' | 'unknown'>(() => {
+    if (profilesError || summaryError || settingsError || limitsError) return 'critical'
+    if (dataStale) return 'warning'
     if (!summary) return 'unknown'
     if (summary.over_95_percent > 0 || summary.need_auth > 0) return 'critical'
     if (summary.over_80_percent > 0 || summary.stale_or_failed > 0) return 'warning'
     return 'good'
-  }, [summary])
+  }, [dataStale, limitsError, profilesError, settingsError, summary, summaryError])
 
   async function handleRefreshProfile(profileKey: string) {
     setRefreshingKey(profileKey)
@@ -212,6 +227,7 @@ export default function App() {
     <div className="min-h-full">
       <Header
         lastRefresh={latestRefresh}
+        dataStale={dataStale}
         onRefreshAll={handleRefreshAll}
         refreshing={refreshAll.isPending}
         onUsageReport={handleUsageReport}

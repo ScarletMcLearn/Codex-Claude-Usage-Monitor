@@ -11,6 +11,7 @@ const HEALTH_META: Record<HealthLevel, { label: string; icon: string; color: str
 
 export function Header({
   lastRefresh,
+  dataStale,
   onRefreshAll,
   refreshing,
   onUsageReport,
@@ -24,6 +25,7 @@ export function Header({
   health,
 }: {
   lastRefresh: string | null
+  dataStale?: boolean
   onRefreshAll: () => void
   refreshing: boolean
   onUsageReport: () => void
@@ -45,7 +47,7 @@ export function Header({
             Claude &amp; Codex Usage Monitor
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Last refresh: {lastRefresh ?? 'never'}
+            Last refresh: {lastRefresh ?? 'never'}{dataStale ? ' (stale)' : ''}
           </p>
         </div>
 

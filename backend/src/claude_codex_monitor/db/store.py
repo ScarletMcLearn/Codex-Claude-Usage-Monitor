@@ -286,17 +286,11 @@ class Store:
                 FROM usage_snapshots s
                 LEFT JOIN profiles p ON p.profile_key = s.profile_key
                 WHERE s.profile_key = ?
-                    AND s.observed_at_utc = (
-                        SELECT MAX(s3.observed_at_utc)
-                        FROM usage_snapshots s3
-                        WHERE s3.profile_key = s.profile_key
-                    )
                     AND s.id = (
                         SELECT s2.id
                         FROM usage_snapshots s2
                         WHERE s2.profile_key = s.profile_key
                             AND s2.window_id = s.window_id
-                            AND s2.observed_at_utc = s.observed_at_utc
                         ORDER BY s2.observed_at_utc DESC, s2.id DESC
                         LIMIT 1
                     )

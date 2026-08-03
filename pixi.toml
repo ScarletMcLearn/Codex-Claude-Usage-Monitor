@@ -1,4 +1,4 @@
-[project]
+[workspace]
 name = "claude-codex-monitor"
 version = "0.1.0"
 description = "Local usage dashboard for Claude Code and Codex CLI profiles"

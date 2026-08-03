@@ -60,6 +60,7 @@ export function DiagnosticsDrawer({
             <Row label="Discovery source" value={diag.discovery_source} />
             <Row label="Config path" value={diag.sanitized_config_path} />
             <Row label="Parser used" value={diag.parser_used ?? 'n/a'} />
+            <Row label="Last command result" value={diag.last_command_result ?? 'n/a'} />
             <Row
               label="Last successful query"
               value={diag.last_successful_query_utc ?? 'never'}
