@@ -872,7 +872,8 @@ def _file_accesses_from_tools(
         path = _tool_path(args)
         if not path:
             continue
-        output = tool.get("output_text") if isinstance(tool.get("output_text"), str) else ""
+        output_value = tool.get("output_text")
+        output = output_value if isinstance(output_value, str) else ""
         stats = _text_stats(output)
         line_start = _int_or_none(args.get("start") or args.get("line_start") or args.get("offset"))
         line_end = _int_or_none(args.get("end") or args.get("line_end") or args.get("limit"))
