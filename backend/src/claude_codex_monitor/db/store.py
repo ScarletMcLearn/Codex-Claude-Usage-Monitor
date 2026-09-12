@@ -1042,16 +1042,16 @@ def _forensic_session_filter_sql(filters: dict[str, Any]) -> tuple[str, list[Any
         value = filters.get(key)
         if value:
             if key in {"project", "repository", "worktree"}:
-                clauses.append(f"{column} LIKE ?")
+                clauses.append(f"AND {column} LIKE ?")
                 params.append(f"%{value}%")
             else:
-                clauses.append(f"{column} = ?")
+                clauses.append(f"AND {column} = ?")
                 params.append(value)
     if filters.get("since_utc"):
-        clauses.append("COALESCE(started_at_utc, ended_at_utc) >= ?")
+        clauses.append("AND COALESCE(started_at_utc, ended_at_utc) >= ?")
         params.append(filters["since_utc"])
     if filters.get("until_utc"):
-        clauses.append("COALESCE(started_at_utc, ended_at_utc) <= ?")
+        clauses.append("AND COALESCE(started_at_utc, ended_at_utc) <= ?")
         params.append(filters["until_utc"])
     for key, column in (
         ("min_total_tokens", "total_tokens"),
@@ -1060,21 +1060,21 @@ def _forensic_session_filter_sql(filters: dict[str, Any]) -> tuple[str, list[Any
     ):
         value = filters.get(key)
         if value is not None:
-            clauses.append(f"COALESCE({column}, 0) >= ?")
+            clauses.append(f"AND COALESCE({column}, 0) >= ?")
             params.append(value)
     if filters.get("has_tools"):
         clauses.append(
-            "EXISTS (SELECT 1 FROM forensic_tool_calls t "
+            "AND EXISTS (SELECT 1 FROM forensic_tool_calls t "
             "WHERE t.session_id = forensic_sessions.session_id)"
         )
     if filters.get("has_commands"):
         clauses.append(
-            "EXISTS (SELECT 1 FROM forensic_commands c "
+            "AND EXISTS (SELECT 1 FROM forensic_commands c "
             "WHERE c.session_id = forensic_sessions.session_id)"
         )
     if filters.get("has_child_relationships"):
         clauses.append(
-            "EXISTS (SELECT 1 FROM forensic_relationships r "
+            "AND EXISTS (SELECT 1 FROM forensic_relationships r "
             "WHERE r.parent_session_id = forensic_sessions.session_id "
             "OR r.child_session_id = forensic_sessions.session_id)"
         )

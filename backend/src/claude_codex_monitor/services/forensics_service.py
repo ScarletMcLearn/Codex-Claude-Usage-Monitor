@@ -171,6 +171,7 @@ class ForensicsService:
         elif (
             current.get("head_fingerprint")
             and current.get("head_fingerprint") != source.get("head_fingerprint")
+            and int(source.get("file_size") or 0) <= checkpoint
         ):
             reset_reason = "replacement_or_rewrite_detected"
             replacement_detected = True
