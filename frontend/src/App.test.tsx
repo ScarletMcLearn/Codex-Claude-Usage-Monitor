@@ -68,11 +68,27 @@ const profiles: ProfileStatus[] = [
     is_stale: false,
     executable_found: true,
   },
+  {
+    provider: 'free_ai',
+    profile_id: 'free-ai-default',
+    profile_key: 'free_ai:default',
+    label: 'Free-AI',
+    friendly_name: null,
+    sanitized_source: 'H:\\Projects\\AI\\Free-AI\\Free-AI',
+    discovery_source: 'default repo',
+    is_active: true,
+    is_authenticated: null,
+    last_refresh_utc: '2026-07-26T21:11:00Z',
+    last_success_utc: '2026-07-26T21:11:00Z',
+    last_error: null,
+    is_stale: false,
+    executable_found: true,
+  },
 ]
 
 const summary: Summary = {
-  total_profiles: 4,
-  queried_successfully: 3,
+  total_profiles: 5,
+  queried_successfully: 4,
   need_auth: 0,
   over_80_percent: 0,
   over_95_percent: 0,
@@ -100,7 +116,7 @@ const settings = (autoRefresh: boolean): Settings => ({
 
 async function renderApp(autoRefresh = true, summaryOverride: Partial<Summary> = {}) {
   vi.resetModules()
-  const refreshAll = vi.fn().mockResolvedValue({ profiles_refreshed: 4, results: {} })
+  const refreshAll = vi.fn().mockResolvedValue({ profiles_refreshed: 5, results: {} })
   const mockedSummary = { ...summary, ...summaryOverride }
   const usageReport = vi.fn().mockResolvedValue({
     generated_at_utc: '2026-07-26T22:05:00Z',
@@ -211,7 +227,7 @@ describe('App refresh orchestration', () => {
     vi.setSystemTime(new Date('2026-07-26T21:11:00Z'))
     await renderApp(true)
 
-    expect(await screen.findByText('Last refresh: 2026-07-26T21:10:00Z')).toBeInTheDocument()
+    expect(await screen.findByText('Last refresh: 2026-07-26T21:11:00Z')).toBeInTheDocument()
     expect(screen.queryByText('Last refresh: 2026-07-26T22:00:00Z')).not.toBeInTheDocument()
   })
 
@@ -219,19 +235,20 @@ describe('App refresh orchestration', () => {
     vi.setSystemTime(new Date('2026-07-26T21:30:00Z'))
     await renderApp(true)
 
-    expect(await screen.findByText('Last refresh: 2026-07-26T21:10:00Z (stale)')).toBeInTheDocument()
+    expect(await screen.findByText('Last refresh: 2026-07-26T21:11:00Z (stale)')).toBeInTheDocument()
     expect(screen.getByTestId('health-indicator')).toHaveTextContent('Needs attention')
   })
 
-  it('puts Claude, Codex, then Antigravity defaults first', async () => {
+  it('puts Claude, Codex, Antigravity, then Free-AI first', async () => {
     await renderApp(true)
 
     const cards = await screen.findAllByTestId('profile-card')
 
-    expect(cards.map((card) => card.dataset.profileKey).slice(0, 3)).toEqual([
+    expect(cards.map((card) => card.dataset.profileKey).slice(0, 4)).toEqual([
       'claude:default',
       'codex:default',
       'antigravity:default',
+      'free_ai:default',
     ])
   })
 

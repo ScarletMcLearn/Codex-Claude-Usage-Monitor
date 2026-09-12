@@ -9,6 +9,17 @@ function formatPercent(value: number | null) {
   return value === null ? '—' : `${value.toFixed(0)}%`
 }
 
+function formatUsed(limit: UsageLimit) {
+  if (limit.used_percent !== null) return formatPercent(limit.used_percent)
+  if (limit.used_units !== null) return `${limit.used_units.toFixed(0)} req`
+  return '—'
+}
+
+function providerLabel(provider: ProfileStatus['provider']) {
+  if (provider === 'free_ai') return 'Free-AI'
+  return provider
+}
+
 function Metric({
   label,
   value,
@@ -65,13 +76,17 @@ export function ProfileCard({
       ? 'border-l-4 border-l-orange-500'
       : profile.provider === 'codex'
         ? 'border-l-4 border-l-teal-500'
-        : 'border-l-4 border-l-blue-500'
+        : profile.provider === 'free_ai'
+          ? 'border-l-4 border-l-emerald-500'
+          : 'border-l-4 border-l-blue-500'
   const providerText =
     profile.provider === 'claude'
       ? 'text-orange-600 dark:text-orange-400'
       : profile.provider === 'codex'
         ? 'text-teal-600 dark:text-teal-400'
-        : 'text-blue-600 dark:text-blue-400'
+        : profile.provider === 'free_ai'
+          ? 'text-emerald-600 dark:text-emerald-400'
+          : 'text-blue-600 dark:text-blue-400'
 
   return (
     <div
@@ -91,7 +106,7 @@ export function ProfileCard({
                 providerText
               )}
             >
-              {profile.provider}
+              {providerLabel(profile.provider)}
             </span>
             {profile.is_stale && <StatusBadge quality="stale" />}
           </div>
@@ -127,7 +142,7 @@ export function ProfileCard({
               className="space-y-2 rounded-md border border-slate-100 p-2 dark:border-slate-700/70"
             >
               <div className="grid grid-cols-2 gap-2">
-                <Metric label="Used" value={formatPercent(limit.used_percent)} testId="used-percent" />
+                <Metric label="Used" value={formatUsed(limit)} testId="used-percent" />
                 <Metric
                   label="Remaining"
                   value={formatPercent(limit.remaining_percent)}

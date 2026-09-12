@@ -11,4 +11,5 @@ def list_providers() -> list[dict]:
         {"provider": "claude", "display_name": "Claude Code"},
         {"provider": "codex", "display_name": "Codex"},
         {"provider": "antigravity", "display_name": "Antigravity"},
+        {"provider": "free_ai", "display_name": "Free-AI"},
     ]

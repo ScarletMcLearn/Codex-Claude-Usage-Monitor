@@ -9,6 +9,7 @@ from ..adapters.antigravity_adapter import AntigravityProviderAdapter
 from ..adapters.base import ProviderAdapter
 from ..adapters.claude_adapter import ClaudeProviderAdapter
 from ..adapters.codex_adapter import CodexProviderAdapter
+from ..adapters.free_ai_adapter import FreeAIProviderAdapter
 from ..db.store import Store
 from ..models.profile import ProfileStatus
 
@@ -22,11 +23,13 @@ class DiscoveryService:
         claude_adapter: ProviderAdapter | None = None,
         codex_adapter: ProviderAdapter | None = None,
         antigravity_adapter: ProviderAdapter | None = None,
+        free_ai_adapter: ProviderAdapter | None = None,
     ) -> None:
         self._store = store
         self.claude_adapter: ProviderAdapter = claude_adapter or ClaudeProviderAdapter()
         self.codex_adapter: ProviderAdapter = codex_adapter or CodexProviderAdapter()
         self.antigravity_adapter: ProviderAdapter = antigravity_adapter or AntigravityProviderAdapter()
+        self.free_ai_adapter: ProviderAdapter = free_ai_adapter or FreeAIProviderAdapter()
 
     @property
     def adapters(self) -> dict[str, ProviderAdapter]:
@@ -34,6 +37,7 @@ class DiscoveryService:
             "claude": self.claude_adapter,
             "codex": self.codex_adapter,
             "antigravity": self.antigravity_adapter,
+            "free_ai": self.free_ai_adapter,
         }
 
     def discover_all(self) -> list[ProfileStatus]:

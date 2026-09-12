@@ -62,7 +62,7 @@ def refresh_all(usage_service: UsageService = Depends(get_usage_service)) -> dic
 def usage_report(
     discovery_service: DiscoveryService = Depends(get_discovery_service),
 ) -> dict:
-    """Actively query each provider and return a report without persisting.
+    """Query each provider and return a report without persisting.
 
     Codex supports a live usage probe through `codex app-server --stdio`.
     Claude is probed through `/usage`; if that output has no parseable
@@ -70,6 +70,7 @@ def usage_report(
     payload captured by the notifier DB. Antigravity profiles are discovered,
     but automatic print-mode `/usage` probing is disabled by default because
     it creates normal Antigravity turns instead of opening the slash panel.
+    Free-AI is passive: local config/env/log reads only, no provider calls.
     """
 
     profiles = discovery_service.discover_all()
@@ -96,6 +97,7 @@ def usage_report(
             "claude": "claude /usage live command",
             "codex": "codex app-server live probe",
             "antigravity": "antigravity /usage live command",
+            "free_ai": "free-ai local logs",
         }.get(profile.provider, f"{profile.provider} live probe")
 
         try:

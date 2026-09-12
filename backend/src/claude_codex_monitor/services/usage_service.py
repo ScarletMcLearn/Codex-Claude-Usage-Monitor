@@ -150,6 +150,8 @@ def _row_to_usage_limit(row: dict[str, Any]) -> UsageLimit:
         window_id=row["window_id"],
         window_label=window_label(),
         used_percent=row.get("used_percent"),
+        used_units=row.get("used_units"),
+        max_units=row.get("max_units"),
         remaining_percent=row.get("remaining_percent"),
         resets_at_utc=parse_dt(row.get("resets_at_utc")),
         reset_confirmed=bool(row.get("reset_confirmed")),

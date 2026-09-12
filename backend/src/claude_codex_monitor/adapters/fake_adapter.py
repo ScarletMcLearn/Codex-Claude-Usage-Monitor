@@ -204,3 +204,61 @@ class FakeAntigravityAdapter:
             current_error=str(error) if error else None,
             suggested_action="This is fake/demo data (CLAUDE_CODEX_MONITOR_FAKE_ADAPTERS=1).",
         )
+
+
+class FakeFreeAIAdapter:
+    provider_name = "free_ai"
+
+    def discover_profiles(self) -> list[ProfileStatus]:
+        return [
+            ProfileStatus(
+                provider="free_ai",
+                profile_id="fake-free-ai",
+                profile_key="free_ai:fake-free-ai",
+                label="Free-AI",
+                sanitized_source="H:\\Projects\\AI\\Free-AI\\Free-AI",
+                discovery_source="fake repo",
+            )
+        ]
+
+    def validate_profile(self, profile: ProfileStatus) -> tuple[bool, str]:
+        return True, "fake Free-AI repo"
+
+    def fetch_usage(self, profile: ProfileStatus) -> Any:
+        return {"profile_id": profile.profile_id}
+
+    def parse_usage(self, profile: ProfileStatus, raw: Any) -> list[UsageLimit]:
+        now = datetime.now(UTC)
+        return [
+            UsageLimit(
+                provider="free_ai",
+                profile_id=profile.profile_id,
+                window_id="gemini_gemini_3_6_flash",
+                window_label="Gemini / gemini-3.6-flash",
+                used_units=3.0,
+                quality=DataQuality.VERIFIED,
+                observed_at_utc=now,
+                source_detail={
+                    "source": "free_ai_local_router_logs",
+                    "provider_id": "gemini",
+                    "model": "gemini-3.6-flash",
+                    "successful_request_count": 3,
+                    "secret_values_exposed": False,
+                },
+            )
+        ]
+
+    def get_account_metadata(self, profile: ProfileStatus) -> dict[str, Any]:
+        return {"configured_provider_count": 1, "provider_count": 1}
+
+    def diagnose_error(self, profile: ProfileStatus, error) -> ProfileDiagnostics:
+        return ProfileDiagnostics(
+            provider="free_ai",
+            profile_id=profile.profile_id,
+            profile_key=profile.profile_key,
+            discovery_source=profile.discovery_source,
+            sanitized_config_path=profile.sanitized_source,
+            parser_used="fake_adapter",
+            current_error=str(error) if error else None,
+            suggested_action="This is fake/demo data (CLAUDE_CODEX_MONITOR_FAKE_ADAPTERS=1).",
+        )

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 
 class ProfileStatus(BaseModel):
-    provider: str  # "claude" | "codex" | "antigravity"
+    provider: str  # "claude" | "codex" | "antigravity" | "free_ai"
     profile_id: str  # raw internal id (path-derived); never shown raw in UI
     profile_key: str  # "provider:profile_id" - stable cross-table key
     label: str  # user-friendly or auto-derived safe label

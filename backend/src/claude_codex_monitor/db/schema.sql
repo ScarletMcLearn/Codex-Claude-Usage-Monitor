@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS usage_snapshots (
     window_id          TEXT NOT NULL,
     window_label       TEXT,
     used_percent       REAL,
+    used_units         REAL,
+    max_units          REAL,
     remaining_percent  REAL,
     resets_at_utc      TEXT,
     reset_confirmed    INTEGER NOT NULL DEFAULT 0,

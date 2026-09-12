@@ -54,6 +54,8 @@ class HistoryService:
             window_id=limit.window_id,
             window_label=limit.window_label,
             used_percent=limit.used_percent,
+            used_units=limit.used_units,
+            max_units=limit.max_units,
             remaining_percent=limit.remaining_percent,
             resets_at_utc=limit.resets_at_utc,
             reset_confirmed=limit.reset_confirmed,

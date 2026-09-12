@@ -1,70 +1,72 @@
-<!-- CODEX-HANDOFF:COMPLETE -->
+<!-- CODEX-HANDOFF:ACTIVE -->
 
 # Codex Agent Handover
 
 ## Objective
 
-Audit Claude, Codex, and agy configuration across all local profiles for file/folder access permissions that look broader than intended, especially "allow always" style entries.
+Implement Free-AI zero-token usage monitoring in Claude Codex Usage Monitor. Add provider `free_ai` that reads only local Free-AI repo files and logs, never calls provider APIs or Free-AI live commands.
 
 ## Current status
 
-Audit complete. No config edits made.
+Implementation patched. Tests not run yet.
 
 ## Completed work
 
-Loaded caveman skill.
-Discovered config roots:
-`C:\Users\getra\.claude`, `.claude-mt`, `.claude-nc`, `.claude-personal`, `.claude-shared`
-`C:\Users\getra\.codex`
-`C:\Users\getra\AppData\Local\agy`
-`C:\Users\getra\AppData\Local\antigravity`
-`C:\Users\getra\.gemini`
-Checked Claude `settings.json` permission blocks and `.claude.json` project allow lists.
-Checked Codex `config.toml` trusted projects and MCP server paths.
-Checked agy/Gemini `settings.json` permission and trusted workspace config.
-Checked for filesystem-style MCP servers; found none active.
+- Inspected existing adapter patterns for Claude, Codex, Antigravity, fake adapters, API providers, frontend provider typing/order.
+- Inspected Free-AI repo shape: `config/free-providers.json`, `.env.example`, router logs under `artifacts/logs/free-ai-*.log`.
+- Confirmed Free-AI `doctor` performs live small provider calls, so monitor must not invoke it.
+- Added passive `FreeAIProviderAdapter`.
+- Registered `free_ai` in discovery, API providers, DB provider seed, fake adapters, diagnostics summaries, usage report labels.
+- Persisted `used_units`/`max_units` in snapshots with idempotent SQLite column migration.
+- Updated frontend provider typing, ordering, labels, and count display.
+- Added Free-AI backend unit tests and updated API/frontend tests.
+- Updated `.env.example` and README docs.
 
 ## Files changed
 
-`.agent/HANDOFF.md`: operational checkpoint for this audit.
+- `.agent/HANDOFF.md`: active operational checkpoint.
+- `backend/src/claude_codex_monitor/adapters/free_ai_adapter.py`: new zero-token local file/log adapter.
+- Backend service/API/DB files: registered provider and persisted unit counts.
+- Frontend provider files: added `free_ai` type/order/display and `used_units` request count rendering.
+- Backend/frontend tests: added Free-AI adapter tests and updated provider/profile expectations.
+- `.env.example`, `README.md`: documented `CCM_FREE_AI_REPO` and zero-token behavior.
 
 ## Commands and tests run
 
-Read `C:\Users\getra\.codex\skills\caveman\SKILL.md`.
-Listed config dirs under `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`.
-Listed likely config files with `Get-ChildItem`.
-Searched permission lines with `Select-String`.
-Parsed JSON configs with `ConvertFrom-Json -AsHashtable`.
-Parsed Codex project trust entries from `config.toml`.
-Ran `git status --short`.
+- `git status --short`: showed pre-existing unrelated changes: `D .claude/scheduled_tasks.lock`, `M start-dashboard.ps1`.
+- Read relevant backend/frontend/Free-AI files.
+- No tests yet after implementation.
 
 ## Current failures or blockers
 
-Sandbox PowerShell launch failed with `CreateProcessAsUserW failed: 5`; read-only commands ran with approved escalation.
+- None.
 
 ## Decisions and assumptions
 
-Did not print secrets/tokens.
-Did not inspect large transcript/log DB contents except config-related listings.
-Did not modify Claude/Codex/agy config files.
+- Free-AI provider must be passive/local only.
+- Default Free-AI repo path: `H:\Projects\AI\Free-AI\Free-AI`; override with `CCM_FREE_AI_REPO`.
+- Do not copy or expose provider API keys. Only boolean configured status from `.env`.
+- Usage is request counts from local router logs, with null percentage/quota fields.
 
 ## Exact next steps
 
-If user wants cleanup:
-1. Remove or narrow `C:\Users\getra` and `C:\Windows\System32` trusted entries from `C:\Users\getra\.codex\config.toml`.
-2. Narrow `trustedWorkspaces` in `C:\Users\getra\.gemini\antigravity-cli\settings.json` from `C:\Users\getra` to explicit project folders.
-3. Consider adding Claude-style deny/ask guard to `C:\Users\getra\.claude-personal\settings.json`.
+1. Run targeted backend tests for Free-AI/API.
+2. Run frontend tests or typecheck for changed provider types.
+3. Fix any failures.
+4. Mark handoff complete before final.
 
 ## Risks and warnings
 
-Do not stage or commit `.agent/HANDOFF.md`.
-Do not expose secrets from config files.
-Do not revert dirty repo files.
+- Never run `free-ai-doctor`, `free-ai-test --live`, router, or any provider API.
+- Do not touch unrelated dirty files.
+- Avoid logging secret env values.
 
 ## Repository state
 
-`git status --short` included many pre-existing modified files. `.agent/HANDOFF.md` modified by this audit.
+- Pre-existing unrelated: `D .claude/scheduled_tasks.lock`, `M start-dashboard.ps1`.
+- Current work also modifies backend/frontend/docs/test files and adds `backend/src/claude_codex_monitor/adapters/free_ai_adapter.py`, `backend/tests/unit/test_free_ai_adapter.py`.
+- Diff stat: 22 files changed, 206 insertions, 65 deletions.
 
 ## Last updated
 
-2026-08-03T19:42:00+06:00
+2026-09-12T19:16:00.3777119+06:00

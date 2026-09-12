@@ -17,7 +17,12 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from . import config, paths
-from .adapters.fake_adapter import FakeAntigravityAdapter, FakeClaudeAdapter, FakeCodexAdapter
+from .adapters.fake_adapter import (
+    FakeAntigravityAdapter,
+    FakeClaudeAdapter,
+    FakeCodexAdapter,
+    FakeFreeAIAdapter,
+)
 from .api.routers import (
     diagnostics,
     discovery,
@@ -54,6 +59,7 @@ def _wire_services(app: FastAPI) -> None:
             claude_adapter=FakeClaudeAdapter(),
             codex_adapter=FakeCodexAdapter(),
             antigravity_adapter=FakeAntigravityAdapter(),
+            free_ai_adapter=FakeFreeAIAdapter(),
         )
     else:
         discovery_service = DiscoveryService(store)
@@ -91,7 +97,7 @@ async def lifespan(app: FastAPI):
 def create_app(*, enable_lifespan: bool = True) -> FastAPI:
     app = FastAPI(
         title="Claude Codex Monitor",
-        description="Local usage dashboard for Claude Code, Codex CLI, and Antigravity profiles",
+        description="Local usage dashboard for Claude Code, Codex CLI, Antigravity, and Free-AI profiles",
         version="0.1.0",
         lifespan=lifespan if enable_lifespan else None,
     )

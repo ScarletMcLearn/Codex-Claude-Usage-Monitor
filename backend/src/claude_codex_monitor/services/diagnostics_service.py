@@ -95,5 +95,7 @@ def _source_summary(source: str) -> str:
         "codex_app_server_live_probe": "Codex app-server live probe returned account rate limits.",
         "antigravity_usage_snapshot": "Antigravity usage snapshot text file supplied quota windows.",
         "antigravity_usage_command": "Antigravity usage command parsed quota windows.",
+        "free_ai_local_router_logs": "Free-AI local router logs supplied successful model request counts.",
+        "free_ai_local_files": "Free-AI local config/env files were read without provider API calls.",
     }
     return summaries.get(source, source)

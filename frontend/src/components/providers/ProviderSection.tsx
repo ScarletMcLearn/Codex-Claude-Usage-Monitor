@@ -12,7 +12,7 @@ export function ProviderSection({
   onOpenDiagnostics,
   refreshingKey,
 }: {
-  provider: 'claude' | 'codex' | 'antigravity'
+  provider: ProfileStatus['provider']
   title: string
   profiles: ProfileStatus[]
   limitsByProfile: Record<string, UsageLimit[]>
@@ -30,7 +30,9 @@ export function ProviderSection({
             ? 'text-lg font-semibold text-orange-700 dark:text-orange-400'
             : provider === 'codex'
               ? 'text-lg font-semibold text-teal-700 dark:text-teal-400'
-              : 'text-lg font-semibold text-blue-700 dark:text-blue-400'
+              : provider === 'free_ai'
+                ? 'text-lg font-semibold text-emerald-700 dark:text-emerald-400'
+                : 'text-lg font-semibold text-blue-700 dark:text-blue-400'
         }
       >
         {title}

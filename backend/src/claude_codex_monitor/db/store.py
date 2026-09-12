@@ -42,6 +42,15 @@ def _parse_iso(value: str | None) -> datetime | None:
     return dt.astimezone(UTC)
 
 
+def _ensure_column(connection: sqlite3.Connection, table: str, column: str, column_type: str) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
 class Store:
     def __init__(self, path: Path | None = None) -> None:
         self.path = Path(path) if path else history_db_path()
@@ -69,6 +78,8 @@ class Store:
                 pass
             connection.execute("PRAGMA synchronous=NORMAL")
             connection.executescript(SCHEMA_SQL)
+            _ensure_column(connection, "usage_snapshots", "used_units", "REAL")
+            _ensure_column(connection, "usage_snapshots", "max_units", "REAL")
             connection.execute(
                 "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -77,6 +88,7 @@ class Store:
                 ("claude", "Claude Code"),
                 ("codex", "Codex"),
                 ("antigravity", "Antigravity"),
+                ("free_ai", "Free-AI"),
             ):
                 connection.execute(
                     "INSERT OR IGNORE INTO providers (provider, display_name) VALUES (?, ?)",
@@ -196,21 +208,26 @@ class Store:
         observed_at_utc: datetime,
         source_detail: dict[str, Any] | None = None,
         is_reset_boundary: bool = False,
+        used_units: float | None = None,
+        max_units: float | None = None,
     ) -> int:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO usage_snapshots
-                    (profile_key, window_id, window_label, used_percent, remaining_percent,
+                    (profile_key, window_id, window_label, used_percent, used_units,
+                     max_units, remaining_percent,
                      resets_at_utc, reset_confirmed, quality, unavailable_reason,
                      observed_at_utc, source_detail_json, is_reset_boundary)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     profile_key,
                     window_id,
                     window_label,
                     used_percent,
+                    used_units,
+                    max_units,
                     remaining_percent,
                     _iso(resets_at_utc),
                     1 if reset_confirmed else 0,

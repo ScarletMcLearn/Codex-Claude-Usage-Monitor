@@ -1,7 +1,7 @@
 # Claude & Codex Usage Monitor
 
 A local, single-page dashboard that auto-discovers every Claude Code, OpenAI
-Codex CLI, and Google Antigravity profile on this Windows machine and shows
+Codex CLI, Google Antigravity, and Free-AI profile on this Windows machine and shows
 real usage limits, history, and forecasts — without ever fabricating a number.
 
 Everything runs on `127.0.0.1` only. Nothing leaves the machine.
@@ -14,7 +14,7 @@ Everything runs on `127.0.0.1` only. Nothing leaves the machine.
   `-p/--profile` sub-configs), and Antigravity profiles/projects
   (`~/.gemini/antigravity-cli`, `~/.gemini/antigravity`, app-data homes,
   env/PowerShell overrides, Chromium-style `Default`/`Profile *` dirs, and
-  `~/.gemini/config/projects/*.json`).
+  `~/.gemini/config/projects/*.json`), plus the local Free-AI repo.
 - Shows current usage per limit window (used/remaining %, reset time, live
   countdown), historical charts, a simple exhaustion forecast, and clearly
   flags stale/unreachable/unauthenticated profiles.
@@ -103,6 +103,7 @@ flowchart TD
 | Claude Code | Self-contained (`vendor/claude_statusline/discovery.py`, adapted from the sibling `claude-usage-notifier` project) | Reads the sibling `claude-usage-notifier`'s own SQLite state DB read-only, if that separate tool is installed and has captured statusline data. **This dashboard does not itself register a statusline hook** — see Known limitations. |
 | Codex | Self-contained (`vendor/codex_appserver/discovery.py`, adapted from the sibling `ai_usage_notifier` project) | Live, on-demand: spawns `codex [--profile X] app-server --stdio` and reads `account/rateLimits/read` over JSON-RPC. |
 | Antigravity | Self-contained (`vendor/antigravity/discovery.py`) | Discovers profiles/projects as first-class profiles. Antigravity has an interactive `/usage`/`/quota` panel, but `agy --print /usage` creates a normal Antigravity turn instead of opening that panel, so automatic probing is disabled by default to avoid burning usage. |
+| Free-AI | Local repo path (`CCM_FREE_AI_REPO`, default `H:\Projects\AI\Free-AI\Free-AI`) | Zero-token passive monitoring: reads only `config/free-providers.json`, `.env` presence flags, and `artifacts/logs/free-ai-*.log`. It never runs Free-AI, doctor/tests, router, chat completions, or provider APIs. |
 
 ## Data quality labels — what verified/derived/estimated/stale/unavailable mean
 
@@ -126,8 +127,9 @@ number without saying how sure it is:
   dashboard **never** shows `0%` or `100%` to mean "no data" — that would be
   a fabrication.
 
-`max_units` / `used_units` are always `null` today: no provider adapter
-exposes a real absolute denominator, so one is never invented.
+`max_units` is always `null` today: no provider adapter exposes a real absolute
+denominator, so one is never invented. Free-AI may set `used_units` to local
+successful router request counts parsed from logs; this is not quota usage.
 
 ## Install / dev / prod-local-start
 
@@ -189,6 +191,10 @@ PowerShell `--user-data-dir` / `--profile` hints, Chromium-style profile dirs
 (`Default`, `Profile *`) under credible homes, and
 `~/.gemini/config/projects/*.json`.
 
+**Free-AI**: default `H:\Projects\AI\Free-AI\Free-AI`, or
+`CCM_FREE_AI_REPO` if set. A candidate must contain `package.json`,
+`config/free-providers.json`, and `.env.example`.
+
 Adapters do not recursively scan the filesystem or a whole drive — only the
 user home (one level) plus explicitly named locations.
 
@@ -214,6 +220,12 @@ user home (one level) plus explicitly named locations.
   or set `CCM_ANTIGRAVITY_USAGE_SNAPSHOT` to another text file path. Set
   `CCM_ANTIGRAVITY_USAGE_COMMAND=1` only if you want to try the experimental
   print-mode parser.
+- **Free-AI**: this dashboard reads the local Free-AI provider config,
+  `.env` key presence, and router logs. It reports successful local
+  provider/model request counts from `artifacts/logs/free-ai-*.log`.
+  It never copies API keys into this monitor, never prints secret values, and
+  never calls `free-ai-doctor`, `free-ai-test`, the router, chat completions,
+  or provider APIs.
 
 ## Troubleshooting
 
@@ -231,6 +243,10 @@ user home (one level) plus explicitly named locations.
   interactive `/usage` panel is not available through `agy --print`. Open
   Antigravity CLI and run `/usage` or `/quota`, then put copied panel text in
   `~/.gemini/antigravity-cli/usage.txt` if you want the dashboard to parse it.
+- **A Free-AI profile shows "Unavailable"**: discovery worked, but no local
+  `artifacts/logs/free-ai-*.log` success entries exist yet. Run Free-AI
+  normally; the monitor will read the logs on the next refresh without using
+  tokens.
 - **Dashboard is slow to refresh**: Windows toast notifications
   (`win11toast`) are fired on a background thread so they never block a
   refresh; if you still see slowness, check `refresh_log` via the DB or
@@ -285,7 +301,7 @@ Pydantic models in `backend/src/claude_codex_monitor/models/`.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/health` | Liveness check |
-| GET | `/api/providers` | List providers (claude, codex) |
+| GET | `/api/providers` | List providers (claude, codex, antigravity, free_ai) |
 | GET | `/api/profiles` | List discovered profiles + status |
 | POST | `/api/discovery/refresh` | Re-run discovery |
 | POST | `/api/profiles/{profile_key}/refresh` | Refresh one profile |
@@ -322,6 +338,8 @@ diagnose_error(profile, error) -> ProfileDiagnostics  # sanitized
 - **Codex**: only the `primary` rate-limit window is reliably present in
   practice; `secondary` is often absent and is correctly reported as
   unavailable, never a fabricated 0%.
+- **Free-AI**: no provider quota percentages are probed. Only local successful
+  router request counts are shown.
 - Forecasts are simple linear extrapolations over the current reset cycle
   and require at least 3 verified readings — they are not a statistical
   model and should be treated as a rough guide only.

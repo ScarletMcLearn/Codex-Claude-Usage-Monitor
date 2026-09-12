@@ -54,7 +54,7 @@ function Invoke-PixiRun {
 
     Push-Location $RepoRoot
     try {
-        & pixi run $Task
+        & pixi run $Task | Out-Host
         return $LASTEXITCODE
     }
     finally {

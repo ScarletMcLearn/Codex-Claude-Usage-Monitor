@@ -47,6 +47,7 @@ function cardOrder(profile: ProfileStatus) {
   if (profile.provider === 'claude' && isDefaultProfile(profile)) return 0
   if (profile.provider === 'codex' && isDefaultProfile(profile)) return 1
   if (profile.provider === 'antigravity' && isDefaultProfile(profile)) return 2
+  if (profile.provider === 'free_ai') return 3
   if (isDefaultProfile(profile)) return 3
   if (profile.provider === 'claude') return 4
   if (profile.provider === 'codex') return 5
@@ -256,7 +257,7 @@ export default function App() {
         {(profiles ?? []).length === 0 ? (
           <EmptyState
             title="No profiles discovered yet"
-            description="Click Refresh all, or check that Claude Code, Codex CLI, or Antigravity are installed on this machine."
+            description="Click Refresh all, or check that Claude Code, Codex CLI, Antigravity, or Free-AI are installed on this machine."
           />
         ) : (
           <section aria-labelledby="section-profiles" className="space-y-3">
