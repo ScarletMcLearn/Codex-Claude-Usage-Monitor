@@ -1,4 +1,4 @@
-<!-- CODEX-HANDOFF:ACTIVE -->
+<!-- CODEX-HANDOFF:COMPLETE -->
 
 # Codex Agent Handover
 
@@ -8,7 +8,7 @@ Implement Free-AI zero-token usage monitoring in Claude Codex Usage Monitor. Add
 
 ## Current status
 
-Implementation patched. Tests not run yet.
+Implementation complete. Targeted backend tests, scoped backend lint, frontend tests, and TypeScript no-emit check passed.
 
 ## Completed work
 
@@ -35,7 +35,12 @@ Implementation patched. Tests not run yet.
 
 - `git status --short`: showed pre-existing unrelated changes: `D .claude/scheduled_tasks.lock`, `M start-dashboard.ps1`.
 - Read relevant backend/frontend/Free-AI files.
-- No tests yet after implementation.
+- `uv run pytest tests/unit/test_free_ai_adapter.py tests/api/test_endpoints.py tests/unit/test_usage_service.py`: 23 passed, 1 warning.
+- `uv run ruff check src/claude_codex_monitor/adapters/free_ai_adapter.py src/claude_codex_monitor/adapters/fake_adapter.py src/claude_codex_monitor/api/routers/profiles.py src/claude_codex_monitor/api/routers/providers.py src/claude_codex_monitor/app.py src/claude_codex_monitor/db/store.py src/claude_codex_monitor/services/discovery_service.py src/claude_codex_monitor/services/history_service.py src/claude_codex_monitor/services/usage_service.py tests/unit/test_free_ai_adapter.py tests/api/test_endpoints.py`: passed.
+- `pnpm run test -- src/App.test.tsx`: 9 passed.
+- `pnpm exec tsc -b --noEmit`: passed.
+- `pnpm run test`: 11 files passed, 41 tests passed.
+- Full backend ruff over `src` was not used as final gate because it reports pre-existing Antigravity long-line lint debt outside this change.
 
 ## Current failures or blockers
 
@@ -50,10 +55,8 @@ Implementation patched. Tests not run yet.
 
 ## Exact next steps
 
-1. Run targeted backend tests for Free-AI/API.
-2. Run frontend tests or typecheck for changed provider types.
-3. Fix any failures.
-4. Mark handoff complete before final.
+1. Review/commit changed files as desired.
+2. Leave unrelated pre-existing changes (`.claude/scheduled_tasks.lock`, `start-dashboard.ps1`) untouched unless user asks.
 
 ## Risks and warnings
 
@@ -63,10 +66,10 @@ Implementation patched. Tests not run yet.
 
 ## Repository state
 
-- Pre-existing unrelated: `D .claude/scheduled_tasks.lock`, `M start-dashboard.ps1`.
+- Pre-existing unrelated and untouched: `D .claude/scheduled_tasks.lock`, `M start-dashboard.ps1`.
 - Current work also modifies backend/frontend/docs/test files and adds `backend/src/claude_codex_monitor/adapters/free_ai_adapter.py`, `backend/tests/unit/test_free_ai_adapter.py`.
 - Diff stat: 22 files changed, 206 insertions, 65 deletions.
 
 ## Last updated
 
-2026-09-12T19:16:00.3777119+06:00
+2026-09-12T19:21:11.8628829+06:00

@@ -141,6 +141,45 @@ describe('ProfileCard', () => {
     expect(screen.queryByText('0%')).not.toBeInTheDocument()
   })
 
+  it('renders Free-AI local counts without blank quota fields', () => {
+    render(
+      <ProfileCard
+        profile={{
+          ...profile,
+          provider: 'free_ai',
+          profile_id: 'free-ai',
+          profile_key: 'free_ai:free-ai',
+          label: 'Free-AI',
+          sanitized_source: 'H:\\Projects\\AI\\Free-AI\\Free-AI',
+        }}
+        limits={[
+          {
+            ...limits[0],
+            provider: 'free_ai',
+            profile_id: 'free-ai',
+            window_id: 'gemini_gemini_3_6_flash',
+            window_label: 'Gemini / gemini-3.6-flash',
+            used_percent: null,
+            used_units: 4,
+            max_units: null,
+            remaining_percent: null,
+            resets_at_utc: null,
+            source_detail: { source: 'free_ai_local_router_logs' },
+          },
+        ]}
+        displayTimeZone="Asia/Dhaka"
+        onRefresh={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />
+    )
+    expect(screen.getByText('Requests')).toBeInTheDocument()
+    expect(screen.getByTestId('used-percent')).toHaveTextContent('4 req')
+    expect(screen.getByText('Quota')).toBeInTheDocument()
+    expect(screen.getByTestId('remaining-percent')).toHaveTextContent('Not probed')
+    expect(screen.getByText('Source')).toBeInTheDocument()
+    expect(screen.getByTestId('reset-countdown')).toHaveTextContent('Local logs')
+  })
+
   it('shows stale values with stale reason', () => {
     render(
       <ProfileCard

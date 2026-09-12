@@ -239,15 +239,16 @@ describe('App refresh orchestration', () => {
     expect(screen.getByTestId('health-indicator')).toHaveTextContent('Needs attention')
   })
 
-  it('puts Claude, Codex, Antigravity, then Free-AI first', async () => {
+  it('puts Free-AI after the other providers', async () => {
     await renderApp(true)
 
     const cards = await screen.findAllByTestId('profile-card')
 
-    expect(cards.map((card) => card.dataset.profileKey).slice(0, 4)).toEqual([
+    expect(cards.map((card) => card.dataset.profileKey)).toEqual([
       'claude:default',
       'codex:default',
       'antigravity:default',
+      'claude:work',
       'free_ai:default',
     ])
   })

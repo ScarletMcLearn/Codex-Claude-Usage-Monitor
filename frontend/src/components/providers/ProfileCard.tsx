@@ -15,6 +15,19 @@ function formatUsed(limit: UsageLimit) {
   return '—'
 }
 
+function freeAIQuotaLabel(limit: UsageLimit) {
+  if (limit.quality === 'unavailable') return 'No local logs'
+  if (limit.max_units !== null) return `${limit.max_units.toFixed(0)} max`
+  return 'Not probed'
+}
+
+function sourceLabel(limit: UsageLimit) {
+  const source = limit.source_detail.source
+  if (source === 'free_ai_local_router_logs') return 'Local logs'
+  if (source === 'free_ai_local_files') return 'Local files'
+  return 'Provider'
+}
+
 function providerLabel(provider: ProfileStatus['provider']) {
   if (provider === 'free_ai') return 'Free-AI'
   return provider
@@ -71,6 +84,7 @@ export function ProfileCard({
 }) {
   const [expanded, setExpanded] = useState(false)
   const displayName = profile.friendly_name || profile.label
+  const isFreeAI = profile.provider === 'free_ai'
   const providerAccent =
     profile.provider === 'claude'
       ? 'border-l-4 border-l-orange-500'
@@ -141,35 +155,56 @@ export function ProfileCard({
               key={limit.window_id}
               className="space-y-2 rounded-md border border-slate-100 p-2 dark:border-slate-700/70"
             >
-              <div className="grid grid-cols-2 gap-2">
-                <Metric label="Used" value={formatUsed(limit)} testId="used-percent" />
-                <Metric
-                  label="Remaining"
-                  value={formatPercent(limit.remaining_percent)}
-                  valueClassName="text-emerald-700 dark:text-emerald-300"
-                  testId="remaining-percent"
-                />
-                <Metric
-                  label="Reset"
-                  value={
-                    <CountdownTimer
-                      targetIso={limit.resets_at_utc}
-                      displayTimeZone={displayTimeZone}
-                      isStale={limit.quality === 'stale'}
-                      showLocalTime={false}
+              {isFreeAI ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <Metric label="Requests" value={formatUsed(limit)} testId="used-percent" />
+                  <Metric
+                    label="Quota"
+                    value={freeAIQuotaLabel(limit)}
+                    valueClassName="text-base text-slate-700 dark:text-slate-200"
+                    testId="remaining-percent"
+                  />
+                  <Metric
+                    label="Source"
+                    value={sourceLabel(limit)}
+                    className="col-span-2"
+                    valueClassName="text-base text-slate-700 dark:text-slate-200"
+                    testId="reset-countdown"
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Metric label="Used" value={formatUsed(limit)} testId="used-percent" />
+                    <Metric
+                      label="Remaining"
+                      value={formatPercent(limit.remaining_percent)}
+                      valueClassName="text-emerald-700 dark:text-emerald-300"
+                      testId="remaining-percent"
                     />
-                  }
-                  className="col-span-2"
-                  valueClassName="whitespace-normal text-2xl"
-                  testId="reset-countdown"
-                />
-              </div>
-              <UsageBar
-                usedPercent={limit.used_percent}
-                quality={limit.quality}
-                unavailableReason={limit.unavailable_reason}
-                label={limit.window_label}
-              />
+                    <Metric
+                      label="Reset"
+                      value={
+                        <CountdownTimer
+                          targetIso={limit.resets_at_utc}
+                          displayTimeZone={displayTimeZone}
+                          isStale={limit.quality === 'stale'}
+                          showLocalTime={false}
+                        />
+                      }
+                      className="col-span-2"
+                      valueClassName="whitespace-normal text-2xl"
+                      testId="reset-countdown"
+                    />
+                  </div>
+                  <UsageBar
+                    usedPercent={limit.used_percent}
+                    quality={limit.quality}
+                    unavailableReason={limit.unavailable_reason}
+                    label={limit.window_label}
+                  />
+                </>
+              )}
               <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
                 <span>Status</span>
                 <StatusBadge quality={limit.quality} />
