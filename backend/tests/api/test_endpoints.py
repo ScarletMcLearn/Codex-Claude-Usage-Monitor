@@ -136,3 +136,47 @@ def test_forensics_api_zero_token_empty_state(tmp_data_dir, tmp_path, monkeypatc
 
     r = client.post("/api/forensics/export?export_type=full")
     assert r.status_code == 400
+
+
+def test_forensics_api_session_turn_hotspots_and_export(tmp_data_dir, tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex_home"
+    session_dir = codex_home / "sessions"
+    session_dir.mkdir(parents=True)
+    (session_dir / "session.jsonl").write_text(
+        "\n".join(
+            [
+                '{"timestamp":"2026-09-12T00:00:00Z","type":"user_message","session_id":"s-api","role":"user","content":"ask"}',
+                '{"timestamp":"2026-09-12T00:00:01Z","type":"assistant_message","session_id":"s-api","role":"assistant","content":"answer","usage":{"input_tokens":4,"output_tokens":2},"tool":"exec_command","command":"pytest","stdout":"ok","exit_code":0}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "empty_claude"))
+    monkeypatch.setenv("CCM_FREE_AI_REPO", str(tmp_path / "missing_free_ai"))
+    monkeypatch.setenv("CCM_ANTIGRAVITY_USAGE_SNAPSHOT", str(tmp_path / "missing_antigravity_usage.txt"))
+    monkeypatch.setenv("CCM_DATA_DIR", str(tmp_data_dir))
+    from claude_codex_monitor.app import create_app
+
+    client = TestClient(create_app(enable_lifespan=False))
+    r = client.post("/api/forensics/refresh")
+    assert r.status_code == 200
+    assert r.json()["model_generation_requests"] == 0
+
+    r = client.get("/api/forensics/sessions/s-api")
+    assert r.status_code == 200
+    turn_id = r.json()["turns"][1]["turn_id"]
+
+    r = client.get(f"/api/forensics/turns/{turn_id}")
+    assert r.status_code == 200
+    assert r.json()["turn"]["total_tokens"] == 6
+    assert r.json()["raw_events"][0]["raw_json"]
+
+    r = client.get("/api/forensics/hotspots")
+    assert r.status_code == 200
+    assert r.json()["tools"]
+
+    r = client.post("/api/forensics/export?export_type=full&warning_ack=true")
+    assert r.status_code == 200
+    assert r.json()["path"].endswith(".zip")

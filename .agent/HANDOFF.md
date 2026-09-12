@@ -1,72 +1,54 @@
-<!-- CODEX-HANDOFF:COMPLETE -->
+<!-- CODEX-HANDOFF:ACTIVE -->
 
 # Codex Agent Handover
 
 ## Objective
-Upgrade Claude & Codex Usage Monitor toward zero-token forensic AI usage monitoring:
-passively ingest local telemetry, store provenance/raw events, expose dashboard/API/export
-controls, and prove monitoring path performs no model-generation calls.
+Continue existing Claude & Codex Usage Monitor repo. Do not restart or replace foundation. Extend passive zero-token forensic subsystem with real Codex/Claude semantic parsing, token provenance, drill-down APIs/UI, repeated-context/hotspot analysis, exports, and verification as much as safely possible.
 
 ## Current status
-Implemented and verified focused zero-token forensic path. Work is not the full enormous
-spec, but provides additive foundation: passive JSONL/log/snapshot ingestion, forensic DB
-queries, API routes, dashboard panel, local exports, docs, and tests.
+Audit started. Foundation exists: generic passive JSONL ingestion for Codex/Claude files, Free-AI summary, Antigravity snapshot, SQLite forensic tables, forensics API, frontend Token Forensics panel, warning-gated exports, zero-token counters/tests. Current parser is generic and not source-specific enough.
 
 ## Completed work
-- Inspected repo structure, backend, frontend, DB schema, adapters, diagnostics/tests.
-- Added/continued passive forensic service and API wiring.
-- Added/continued SQLite forensic persistence helpers and JSON-safe coercion.
-- Added frontend Token Forensics API/types/panel integration.
-- Added/continued zero-token tests and API coverage.
-- Updated README/API docs and forensic monitoring doc.
-- Fixed lint/type/test issues found during verification.
+- Read user continuation request and repo instructions.
+- Ran required initial `git status --short` and `git diff --stat`; both returned no visible output in this session.
+- Read current `forensics_service.py`, `schema.sql`, `store.py`, forensics router, frontend panel, API client/types, and existing tests.
+- Confirmed local telemetry files exist under `%USERPROFILE%\.codex\sessions` and `%USERPROFILE%\.claude\projects`.
+- Sampled top-level event keys only, avoiding private prompt/output display.
 
 ## Files changed
-Current uncommitted files from `git status --short`:
-- `README.md`: architecture/API forensic docs.
-- `backend/src/claude_codex_monitor/api/deps.py`: forensics dependency accessor import order.
-- `backend/src/claude_codex_monitor/api/routers/forensics.py`: router import order.
-- `backend/src/claude_codex_monitor/app.py`: router/service import order.
-- `backend/src/claude_codex_monitor/db/store.py`: safer forensic upsert SQL, JSON coercion, export query line wrap.
-- `backend/src/claude_codex_monitor/services/forensics_service.py`: lint/type cleanup, safer stdout/stderr extraction, export warning wrapping.
-- `backend/tests/api/test_endpoints.py`: isolated forensics API test env.
-- `backend/tests/unit/test_forensics_service.py`: isolated passive-source env.
-- `frontend/src/App.test.tsx`: mocked forensics API methods.
+- `.agent/HANDOFF.md`: reopened active handoff with current objective/audit.
 
 ## Commands and tests run
-- `uv run pytest tests/unit/test_forensics_service.py tests/api/test_endpoints.py -q` in `backend`: PASS, 14 passed, 1 pre-existing Starlette/httpx warning.
-- `uv run ruff check ...` on changed backend files/tests: PASS.
-- `uv run pyright ...` on changed backend service/router/store: PASS.
-- `pnpm exec tsc -b` in `frontend`: PASS.
-- `pnpm run build` in `frontend`: initial sandbox EPERM, escalated retry PASS; Vite chunk-size warning only.
-- `pnpm run test -- src\App.test.tsx --reporter=dot` in `frontend`: initial sandbox EPERM, escalated retry PASS, 9 passed; existing React act warnings remain.
+- `git status --short`: no output observed.
+- `git diff --stat`: no output observed.
+- `rg --files -g '!*node_modules*' -g '!*.log'`: inspected file inventory.
+- `Get-Content` on relevant source/test files: audit only.
+- Telemetry sampling commands read top-level keys only from first Codex/Claude JSONL files.
 
 ## Current failures or blockers
-No blocking failures in focused verification. Full repo lint still has pre-existing long-line
-errors in Antigravity files if run across all `src`; changed-file lint is clean.
+None yet. Need inspect event schemas further, using sanitized shape/key extraction only.
 
 ## Decisions and assumptions
-- Forensic refresh must remain passive: no model APIs, no agent CLI prompt commands, no network.
-- Unknown token values stay NULL/unknown; estimates are local and labeled estimated.
-- Full export requires explicit warning ack because it may contain prompts, outputs, code, command output.
-- Existing quota adapters are separate; current Claude/Codex quota refresh can still use active commands/probes outside forensic path.
+- Forensic path must remain passive: no model API calls, no agent prompts, no telemetry-gathering subprocesses that can generate AI.
+- Preserve existing quota monitoring and forensic monitoring separation.
+- Unknown token values stay NULL/unknown; deterministic estimates must be labeled estimated.
+- User wants no commit.
 
 ## Exact next steps
-No required continuation for this task. If extending later:
-1. Add richer provider-specific parsers for actual Codex/Claude JSONL shapes.
-2. Add session detail frontend drill-down and raw provenance viewer.
-3. Add cumulative-to-delta accounting tests for real captured fixtures.
-4. Run full backend/frontend/e2e suites if time permits.
+1. Extract sanitized nested key/type shapes from real Codex and Claude JSONL.
+2. Add source-specific parser functions and sanitized fixtures.
+3. Improve token semantics, cumulative-to-delta handling, provenance, turn association.
+4. Add store/API endpoints for turn detail, repeated context, hotspots/raw provenance as feasible.
+5. Expand frontend drill-down enough to inspect sessions/turns/evidence.
+6. Run focused backend/frontend tests and zero-token regression.
 
 ## Risks and warnings
-- Forensic raw tables/exports can contain sensitive local content.
-- Telemetry formats may change; raw events retained for reparsing.
-- Current parser is best-effort generic JSONL, not full source-specific semantic parser.
-- Do not auto-run `/usage`, `codex app-server`, `claude -p`, or other agent commands from forensic monitor.
+- Real telemetry contains private prompts/outputs; do not print private content in final.
+- Source formats may vary across years/tools; retain unknown raw events.
+- Avoid broad commands and large output dumps.
 
 ## Repository state
-`git status --short` shows 9 modified files listed above.
-`git diff --stat`: 9 files changed, 211 insertions, 66 deletions.
+Initial visible state: no output from `git status --short` or `git diff --stat` in this session.
 
 ## Last updated
-2026-09-12T23:52:24.0866015+06:00
+2026-09-12T23:58:00+06:00

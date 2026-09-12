@@ -8,12 +8,48 @@ analysis. It does not call LLM APIs, start agents, or run prompt commands.
 
 | Agent | Passive source | Tokens | Input/output | Tools | Commands | Raw events | Quality |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Codex | `$CODEX_HOME/sessions`, `projects`, `history` JSONL | Reported when JSONL exposes usage fields; otherwise unknown | Captured when local JSONL contains text | Best-effort from event payloads | Best-effort from event payloads | Yes | reported/estimated/unknown |
-| Claude Code | `$CLAUDE_CONFIG_DIR` or `~/.claude` JSONL under `sessions`, `projects`, `history` | Reported when JSONL exposes usage fields; otherwise unknown | Captured when local JSONL contains text | Best-effort from event payloads | Best-effort from event payloads | Yes | reported/estimated/unknown |
+| Codex | `$CODEX_HOME/sessions`, `projects`, `history` JSONL | Reported when JSONL exposes usage fields; otherwise unknown | Captured from `response_item` message content | Parsed from `function_call`, `custom_tool_call`, web/tool/image search events | Parsed when command-shaped tool payloads expose command/stdout/stderr | Yes | reported/estimated/unknown |
+| Claude Code | `$CLAUDE_CONFIG_DIR` or `~/.claude` JSONL under `sessions`, `projects`, `history` | Reported from assistant `message.usage` when present; otherwise unknown | Captured from `message.content` text blocks | Parsed from `tool_use` and `tool_result` content blocks | Parsed when command-shaped payloads expose command/stdout/stderr | Yes | reported/estimated/unknown |
 | Free-AI | local router logs from configured Free-AI repo | Unknown unless logs expose tokens in future parser | Not captured by current log summary | Not captured | Not captured | Summary only | unknown |
 | Antigravity | copied `/usage` snapshot text file | Quota snapshot only; forensic tokens unavailable | Not captured | Not captured | Not captured | Summary only | unknown |
 
 Unsupported values remain `NULL` and render as `Unavailable from source telemetry`.
+
+## Observed Source Formats
+
+Codex rollout JSONL rows observed locally use top-level fields:
+
+```text
+timestamp, ordinal, type, payload
+```
+
+Supported Codex event shapes:
+
+- `session_meta`: session id, cwd, provider/source metadata where exposed.
+- `response_item` with payload `type=message`: user/assistant text blocks.
+- `response_item` with payload `function_call`, `function_call_output`,
+  `custom_tool_call`, `custom_tool_call_output`, `tool_search_*`,
+  `web_search_call`, `image_generation_call`: tool evidence.
+- `response_item` with payload `reasoning`: summary/content if exposed.
+- `event_msg` with payload `token_count`: token/count evidence only when `info`
+  exposes token fields; rate-limit percentages are not treated as model tokens.
+- `compacted`, `turn_context`, and unknown event types: retained as raw events.
+
+Claude Code project JSONL rows observed locally use top-level fields such as:
+
+```text
+type, uuid, parentUuid, sessionId, timestamp, cwd, gitBranch, message
+```
+
+Supported Claude event shapes:
+
+- `user`: `message.role`, string or block `message.content`.
+- `assistant`: `message.model`, `message.content`, `message.usage`,
+  `requestId`, response id, stop fields where exposed in raw provenance.
+- `tool_use`/`tool_result` blocks inside `message.content`.
+- `attachment`, `file-history-snapshot`, `file-history-delta`, `cost-state`,
+  mode/permission/system events: retained as raw events and parsed only for
+  generic text where safely exposed.
 
 ## Data Quality
 
@@ -49,7 +85,11 @@ The dashboard includes a Token Forensics section:
 - source/entity counts;
 - expensive turns;
 - repeated context;
-- session list;
+- session list with click-through drill-down;
+- chronological session turn timeline;
+- turn evidence view for input/output, token labels, context, tools, commands,
+  raw event, and parser provenance;
+- tool, command, and context hotspots;
 - summary export;
 - full forensic export with warning.
 
@@ -97,4 +137,7 @@ run provider commands when enabled by existing settings; those are not used by
 
 Telemetry formats vary and may change. Best-effort parsers preserve raw events so
 future versions can reparse richer fields. Hidden reasoning and non-exposed
-client context cannot be recovered. Unknown values are not guessed.
+client context cannot be recovered. Unknown values are not guessed. Dedicated
+file-access and sub-agent hierarchy tables are not yet present; file/child-agent
+evidence is available only when source telemetry exposes it through messages,
+tools, commands, or raw provenance.

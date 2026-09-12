@@ -35,6 +35,19 @@ def forensic_session(session_id: str, service: ForensicsService = Depends(get_fo
     return detail
 
 
+@router.get("/forensics/turns/{turn_id}")
+def forensic_turn(turn_id: str, service: ForensicsService = Depends(get_forensics_service)):
+    detail = service.turn_detail(turn_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="forensic turn not found")
+    return detail
+
+
+@router.get("/forensics/hotspots")
+def forensic_hotspots(service: ForensicsService = Depends(get_forensics_service)):
+    return service.hotspots()
+
+
 @router.post("/forensics/export")
 def forensic_export(
     export_type: str = Query("summary", pattern="^(summary|full)$"),

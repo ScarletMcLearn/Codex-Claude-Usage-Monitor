@@ -648,6 +648,113 @@ class Store:
             "context_blocks": [dict(row) for row in contexts],
         }
 
+    def forensic_turn_detail(self, turn_id: str, *, limit: int = 200) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            turn = connection.execute(
+                "SELECT * FROM forensic_turns WHERE turn_id = ?", (turn_id,)
+            ).fetchone()
+            if turn is None:
+                return None
+            session = connection.execute(
+                "SELECT * FROM forensic_sessions WHERE session_id = ?", (turn["session_id"],)
+            ).fetchone()
+            messages = connection.execute(
+                """
+                SELECT message_id, role, timestamp_utc, char_count, byte_count, line_count,
+                       content_hash, estimated_tokens, token_quality, raw_event_id,
+                       SUBSTR(text, 1, 4000) AS preview
+                FROM forensic_messages WHERE turn_id = ? LIMIT ?
+                """,
+                (turn_id, limit),
+            ).fetchall()
+            tools = connection.execute(
+                """
+                SELECT tool_call_id, tool_name, arguments_json, status, error, duration_ms,
+                       output_chars, output_bytes, output_lines, content_hash, raw_event_id,
+                       SUBSTR(output_text, 1, 4000) AS output_preview
+                FROM forensic_tool_calls WHERE turn_id = ? LIMIT ?
+                """,
+                (turn_id, limit),
+            ).fetchall()
+            commands = connection.execute(
+                """
+                SELECT command_id, command, cwd, exit_code, output_chars, output_bytes,
+                       output_lines, content_hash, raw_event_id,
+                       SUBSTR(stdout_text, 1, 4000) AS stdout_preview,
+                       SUBSTR(stderr_text, 1, 4000) AS stderr_preview
+                FROM forensic_commands WHERE turn_id = ? LIMIT ?
+                """,
+                (turn_id, limit),
+            ).fetchall()
+            contexts = connection.execute(
+                """
+                SELECT block_id, category, source, char_count, byte_count, line_count,
+                       content_hash, estimated_tokens, token_quality, first_seen_utc,
+                       raw_event_id, SUBSTR(text, 1, 4000) AS preview
+                FROM forensic_context_blocks WHERE turn_id = ? LIMIT ?
+                """,
+                (turn_id, limit),
+            ).fetchall()
+            raw_events = connection.execute(
+                """
+                SELECT raw_event_id, source_id, session_id, event_index, byte_offset,
+                       timestamp_utc, event_type, content_hash, raw_json
+                FROM forensic_raw_events WHERE raw_event_id = ? LIMIT ?
+                """,
+                (turn["raw_event_id"], limit),
+            ).fetchall()
+        return {
+            "session": dict(session) if session else None,
+            "turn": dict(turn),
+            "messages": [dict(row) for row in messages],
+            "tools": [dict(row) for row in tools],
+            "commands": [dict(row) for row in commands],
+            "context_blocks": [dict(row) for row in contexts],
+            "raw_events": [dict(row) for row in raw_events],
+        }
+
+    def forensic_hotspots(self, *, limit: int = 20) -> dict[str, list[dict[str, Any]]]:
+        with self._connect() as connection:
+            tools = connection.execute(
+                """
+                SELECT tool_name, COUNT(*) AS calls, SUM(COALESCE(output_bytes, 0)) AS output_bytes,
+                       SUM(CASE WHEN status = 'error' OR error IS NOT NULL THEN 1 ELSE 0 END) AS failures
+                FROM forensic_tool_calls
+                GROUP BY tool_name
+                ORDER BY calls DESC, output_bytes DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            commands = connection.execute(
+                """
+                SELECT command, COUNT(*) AS calls, SUM(COALESCE(output_bytes, 0)) AS output_bytes,
+                       SUM(CASE WHEN exit_code IS NOT NULL AND exit_code != 0 THEN 1 ELSE 0 END) AS failures
+                FROM forensic_commands
+                GROUP BY command
+                ORDER BY calls DESC, output_bytes DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            context = connection.execute(
+                """
+                SELECT category, source, content_hash, COUNT(*) AS occurrences,
+                       MAX(byte_count) AS bytes, MAX(estimated_tokens) AS estimated_tokens,
+                       SUBSTR(MIN(text), 1, 240) AS preview
+                FROM forensic_context_blocks
+                GROUP BY category, source, content_hash
+                ORDER BY occurrences DESC, bytes DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return {
+            "tools": [dict(row) for row in tools],
+            "commands": [dict(row) for row in commands],
+            "context": [dict(row) for row in context],
+        }
+
     def list_forensic_table(self, table: str) -> list[dict[str, Any]]:
         allowed = {
             "agents": (

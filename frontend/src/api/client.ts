@@ -7,7 +7,10 @@ import type {
   Summary,
   UsageReport,
   ForensicOverview,
+  ForensicHotspots,
   ForensicSession,
+  ForensicSessionDetail,
+  ForensicTurnDetail,
   UsageLimit,
 } from '../types/usage'
 
@@ -89,6 +92,11 @@ export const api = {
     model_generation_requests: number
   }>('/forensics/refresh', { method: 'POST' }),
   forensicSessions: () => request<ForensicSession[]>('/forensics/sessions?limit=50'),
+  forensicSession: (sessionId: string) =>
+    request<ForensicSessionDetail>(`/forensics/sessions/${encodeURIComponent(sessionId)}`),
+  forensicTurn: (turnId: string) =>
+    request<ForensicTurnDetail>(`/forensics/turns/${encodeURIComponent(turnId)}`),
+  forensicHotspots: () => request<ForensicHotspots>('/forensics/hotspots'),
   forensicExport: (exportType: 'summary' | 'full', warningAck = false) =>
     request<{ path: string; export_type: string; created_at_utc: string }>(
       `/forensics/export?export_type=${exportType}&warning_ack=${warningAck}`,

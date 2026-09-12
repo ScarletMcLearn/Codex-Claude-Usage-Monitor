@@ -176,6 +176,50 @@ export interface ForensicSession {
   token_quality: string
 }
 
+export interface ForensicTurn {
+  turn_id: string
+  session_id: string
+  turn_index: number
+  event_type: string | null
+  timestamp_utc: string | null
+  model: string | null
+  input_tokens: number | null
+  output_tokens: number | null
+  total_tokens: number | null
+  cached_tokens: number | null
+  cache_write_tokens: number | null
+  reasoning_tokens: number | null
+  context_tokens: number | null
+  token_quality: string
+  user_preview: string | null
+  assistant_preview: string | null
+  raw_event_id: string | null
+}
+
+export interface ForensicSessionDetail {
+  session: ForensicSession
+  turns: ForensicTurn[]
+  tools: Array<Record<string, unknown>>
+  commands: Array<Record<string, unknown>>
+  context_blocks: Array<Record<string, unknown>>
+}
+
+export interface ForensicTurnDetail {
+  session: ForensicSession | null
+  turn: ForensicTurn & { provenance_json: string | null }
+  messages: Array<Record<string, unknown>>
+  tools: Array<Record<string, unknown>>
+  commands: Array<Record<string, unknown>>
+  context_blocks: Array<Record<string, unknown>>
+  raw_events: Array<Record<string, unknown>>
+}
+
+export interface ForensicHotspots {
+  tools: Array<Record<string, unknown>>
+  commands: Array<Record<string, unknown>>
+  context: Array<Record<string, unknown>>
+}
+
 export function levelForPercent(pct: number | null, quality: DataQuality): UsageLevel {
   if (pct === null || quality === 'unavailable') return 'unknown'
   if (pct >= 100) return 'exhausted'

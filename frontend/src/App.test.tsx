@@ -161,6 +161,23 @@ async function renderApp(autoRefresh = true, summaryOverride: Partial<Summary> =
         model_generation_requests: 0,
       }),
       forensicSessions: vi.fn().mockResolvedValue([]),
+      forensicSession: vi.fn().mockResolvedValue({
+        session: null,
+        turns: [],
+        tools: [],
+        commands: [],
+        context_blocks: [],
+      }),
+      forensicTurn: vi.fn().mockResolvedValue({
+        session: null,
+        turn: null,
+        messages: [],
+        tools: [],
+        commands: [],
+        context_blocks: [],
+        raw_events: [],
+      }),
+      forensicHotspots: vi.fn().mockResolvedValue({ tools: [], commands: [], context: [] }),
       forensicExport: vi.fn().mockResolvedValue({
         path: 'C:\\Temp\\token-forensics-summary.zip',
         export_type: 'summary',

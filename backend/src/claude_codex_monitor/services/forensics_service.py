@@ -21,7 +21,7 @@ from ..db.store import Store
 from ..models.profile import sanitize_path
 from ..vendor.antigravity.usage_command import read_usage_snapshot, usage_snapshot_path
 
-PARSER_VERSION = "forensics.v1"
+PARSER_VERSION = "forensics.v2"
 _TEXT_KEYS = ("content", "text", "message", "prompt", "output", "response")
 
 
@@ -58,6 +58,12 @@ class ForensicsService:
 
     def session_detail(self, session_id: str) -> dict[str, Any] | None:
         return self._store.forensic_session_detail(session_id)
+
+    def turn_detail(self, turn_id: str) -> dict[str, Any] | None:
+        return self._store.forensic_turn_detail(turn_id)
+
+    def hotspots(self) -> dict[str, list[dict[str, Any]]]:
+        return self._store.forensic_hotspots()
 
     def export(self, *, export_type: str, warning_ack: bool) -> dict[str, Any]:
         if export_type == "full" and not warning_ack:
@@ -284,6 +290,16 @@ class ForensicsService:
 def _normalize_event(
     source: dict[str, Any], raw: dict[str, Any], offset: int, index: int
 ) -> dict[str, Any]:
+    if source["agent"] == "codex" and set(raw) >= {"timestamp", "type", "payload"}:
+        return _normalize_codex_event(source, raw, offset, index)
+    if source["agent"] == "claude" and "type" in raw and "sessionId" in raw:
+        return _normalize_claude_event(source, raw, offset, index)
+    return _normalize_generic_event(source, raw, offset, index)
+
+
+def _normalize_generic_event(
+    source: dict[str, Any], raw: dict[str, Any], offset: int, index: int
+) -> dict[str, Any]:
     raw_json = json.dumps(raw, ensure_ascii=False, sort_keys=True)
     raw_hash = _sha(raw_json)
     raw_event_id = _stable_id(source["source_id"], str(offset), raw_hash)
@@ -391,6 +407,168 @@ def _normalize_event(
     }
 
 
+def _normalize_codex_event(
+    source: dict[str, Any], raw: dict[str, Any], offset: int, index: int
+) -> dict[str, Any]:
+    payload_any = raw.get("payload")
+    payload: dict[str, Any] = payload_any if isinstance(payload_any, dict) else {}
+    raw_json = json.dumps(raw, ensure_ascii=False, sort_keys=True)
+    raw_hash = _sha(raw_json)
+    raw_event_id = _stable_id(source["source_id"], str(offset), raw_hash)
+    timestamp = _normalize_ts(_first_str(raw, ("timestamp",)))
+    event_type = str(raw.get("type") or "event")
+    payload_type = str(payload.get("type") or event_type)
+    session_id = str(
+        payload.get("session_id")
+        or payload.get("id")
+        or _session_id_from_rollout_path(source["source_path"])
+        or _stable_id("codex", source["source_path"])
+    )
+    ordinal = _int_or_none(raw.get("ordinal"))
+    turn_index = ordinal if ordinal is not None else index
+    turn_id = _stable_id(session_id, "codex-turn", str(turn_index))
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
+    model = payload.get("model") if isinstance(payload.get("model"), str) else None
+    provider = (
+        payload.get("model_provider") if isinstance(payload.get("model_provider"), str) else "openai"
+    )
+    usage = _codex_usage(payload)
+    role = str(payload.get("role") or "")
+    messages = _codex_messages(
+        payload, session_id, turn_id, timestamp, source["source_id"], raw_event_id
+    )
+    contexts = _context_from_messages(messages, payload_type, timestamp, raw_event_id)
+    tools = _codex_tools(payload, session_id, turn_id, raw_event_id)
+    commands = _extract_commands(payload, session_id, turn_id, raw_event_id)
+    text_by_role = [(m["role"], m.get("text") or "") for m in messages]
+    user_text = next((t for r, t in text_by_role if r == "user"), None)
+    assistant_text = next((t for r, t in text_by_role if r == "assistant"), None)
+    provenance = {
+        "source_id": source["source_id"],
+        "source_file": source["source_path"],
+        "offset": offset,
+        "event_index": index,
+        "ordinal": ordinal,
+        "parser_version": PARSER_VERSION,
+        "source_format": "codex.rollout_jsonl",
+        "token_semantics": usage.pop("_semantics", "unavailable_from_source_telemetry"),
+    }
+    turn = {
+        "turn_id": turn_id,
+        "session_id": session_id,
+        "turn_index": turn_index,
+        "request_id": str(payload.get("request_id") or payload.get("call_id") or "") or None,
+        "response_id": str(payload.get("response_id") or payload.get("id") or "") or None,
+        "role": role or None,
+        "event_type": payload_type,
+        "timestamp_utc": timestamp,
+        "model": model,
+        **usage,
+        "duration_ms": _int_or_none(payload.get("duration_ms")),
+        "token_quality": "reported" if any(v is not None for v in usage.values()) else "unknown",
+        "provenance_json": json.dumps(provenance),
+        "user_preview": _preview(user_text),
+        "assistant_preview": _preview(assistant_text),
+        "content_hash": raw_hash,
+        "raw_event_id": raw_event_id,
+    }
+    session = {
+        "session_id": session_id,
+        "agent": "codex",
+        "provider": provider,
+        "model": model,
+        "project_path": sanitize_path(cwd) if cwd else None,
+        "started_at_utc": timestamp,
+        "ended_at_utc": timestamp,
+        "source_id": source["source_id"],
+        "raw_event_count": 1,
+        **usage,
+        "token_quality": turn["token_quality"],
+    }
+    return _event_bundle(
+        session, turn, messages, tools, commands, contexts, source, session_id,
+        index, offset, timestamp, payload_type, raw_hash, raw_json, raw_event_id,
+    )
+
+
+def _normalize_claude_event(
+    source: dict[str, Any], raw: dict[str, Any], offset: int, index: int
+) -> dict[str, Any]:
+    message_any = raw.get("message")
+    message: dict[str, Any] = message_any if isinstance(message_any, dict) else {}
+    raw_json = json.dumps(raw, ensure_ascii=False, sort_keys=True)
+    raw_hash = _sha(raw_json)
+    raw_event_id = _stable_id(source["source_id"], str(offset), raw_hash)
+    timestamp = _normalize_ts(_first_str(raw, ("timestamp",)))
+    session_id = str(raw.get("sessionId") or _stable_id("claude", source["source_path"]))
+    event_type = str(raw.get("type") or "event")
+    msg_id = str(raw.get("uuid") or message.get("id") or raw_event_id)
+    parent_id = str(raw.get("parentUuid") or "") or None
+    turn_index = index
+    turn_id = _stable_id(session_id, "claude-turn", msg_id)
+    usage = _claude_usage(message)
+    role = str(message.get("role") or event_type)
+    model = message.get("model") if isinstance(message.get("model"), str) else None
+    cwd = raw.get("cwd") if isinstance(raw.get("cwd"), str) else None
+    messages = _claude_messages(
+        raw, message, session_id, turn_id, timestamp, source["source_id"], raw_event_id
+    )
+    contexts = _context_from_messages(messages, event_type, timestamp, raw_event_id)
+    tools = _claude_tools(message, session_id, turn_id, raw_event_id)
+    commands = _extract_commands(raw, session_id, turn_id, raw_event_id)
+    text_by_role = [(m["role"], m.get("text") or "") for m in messages]
+    user_text = next((t for r, t in text_by_role if r == "user"), None)
+    assistant_text = next((t for r, t in text_by_role if r == "assistant"), None)
+    provenance = {
+        "source_id": source["source_id"],
+        "source_file": source["source_path"],
+        "offset": offset,
+        "event_index": index,
+        "parser_version": PARSER_VERSION,
+        "source_format": "claude.projects_jsonl",
+        "parent_uuid": parent_id,
+        "is_sidechain": bool(raw.get("isSidechain")),
+        "token_semantics": usage.pop("_semantics", "per_message_reported_usage"),
+    }
+    turn = {
+        "turn_id": turn_id,
+        "session_id": session_id,
+        "turn_index": turn_index,
+        "request_id": str(raw.get("requestId") or "") or None,
+        "response_id": str(message.get("id") or "") or None,
+        "role": role or None,
+        "event_type": event_type,
+        "timestamp_utc": timestamp,
+        "model": model,
+        **usage,
+        "duration_ms": None,
+        "token_quality": "reported" if any(v is not None for v in usage.values()) else "unknown",
+        "provenance_json": json.dumps(provenance),
+        "user_preview": _preview(user_text),
+        "assistant_preview": _preview(assistant_text),
+        "content_hash": raw_hash,
+        "raw_event_id": raw_event_id,
+    }
+    session = {
+        "session_id": session_id,
+        "agent": "claude",
+        "provider": "anthropic",
+        "model": model,
+        "project_path": sanitize_path(cwd) if cwd else None,
+        "branch": raw.get("gitBranch") if isinstance(raw.get("gitBranch"), str) else None,
+        "started_at_utc": timestamp,
+        "ended_at_utc": timestamp,
+        "source_id": source["source_id"],
+        "raw_event_count": 1,
+        **usage,
+        "token_quality": turn["token_quality"],
+    }
+    return _event_bundle(
+        session, turn, messages, tools, commands, contexts, source, session_id,
+        index, offset, timestamp, event_type, raw_hash, raw_json, raw_event_id,
+    )
+
+
 def _find_usage(raw: dict[str, Any]) -> dict[str, int | None]:
     usage_obj = raw.get("usage") if isinstance(raw.get("usage"), dict) else raw
     aliases = {
@@ -410,6 +588,289 @@ def _find_usage(raw: dict[str, Any]) -> dict[str, int | None]:
     if out["total_tokens"] is None and out["input_tokens"] is not None and out["output_tokens"] is not None:
         out["total_tokens"] = out["input_tokens"] + out["output_tokens"]
     return out
+
+
+def _codex_usage(payload: dict[str, Any]) -> dict[str, Any]:
+    usage: dict[str, Any] = _find_usage(payload)
+    if payload.get("type") == "token_count":
+        info = payload.get("info") if isinstance(payload.get("info"), dict) else None
+        if info:
+            usage = dict(_find_usage(info))
+            usage["_semantics"] = "codex_token_count_info_observed"
+        else:
+            usage["_semantics"] = "codex_rate_limit_event_no_model_token_usage"
+        return usage
+    usage["_semantics"] = (
+        "codex_response_item_reported_usage"
+        if any(value is not None for value in usage.values())
+        else "unavailable_from_source_telemetry"
+    )
+    return usage
+
+
+def _claude_usage(message: dict[str, Any]) -> dict[str, Any]:
+    usage_any = message.get("usage")
+    usage_obj: dict[str, Any] = usage_any if isinstance(usage_any, dict) else {}
+    cache_creation = usage_obj.get("cache_creation")
+    cache_write = None
+    if isinstance(cache_creation, dict):
+        cache_write = sum(
+            value for value in (_int_or_none(v) for v in cache_creation.values()) if value is not None
+        )
+    usage = {
+        "input_tokens": _int_or_none(usage_obj.get("input_tokens")),
+        "output_tokens": _int_or_none(usage_obj.get("output_tokens")),
+        "total_tokens": None,
+        "cached_tokens": _int_or_none(usage_obj.get("cache_read_input_tokens")),
+        "cache_write_tokens": (
+            _int_or_none(usage_obj.get("cache_creation_input_tokens")) or cache_write
+        ),
+        "reasoning_tokens": _int_or_none(
+            _nested(usage_obj.get("output_tokens_details"), ("reasoning_tokens",))
+        ),
+        "context_tokens": None,
+        "_semantics": "claude_assistant_message_usage_per_api_response",
+    }
+    if (
+        usage["total_tokens"] is None
+        and usage["input_tokens"] is not None
+        and usage["output_tokens"] is not None
+    ):
+        usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
+    return usage
+
+
+def _codex_messages(
+    payload: dict[str, Any],
+    session_id: str,
+    turn_id: str,
+    timestamp: str | None,
+    source_id: str,
+    raw_event_id: str,
+) -> list[dict[str, Any]]:
+    blocks: list[tuple[str, str]] = []
+    role = str(payload.get("role") or "unknown")
+    content = payload.get("content")
+    if isinstance(content, str):
+        blocks.append((role, content))
+    elif isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text") or block.get("content")
+                if isinstance(text, str) and text.strip():
+                    blocks.append((role, text))
+    for key in ("summary", "input", "output"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            blocks.append((_role_for_codex_payload(payload, key), value))
+    return _message_rows(blocks, session_id, turn_id, timestamp, source_id, raw_event_id)
+
+
+def _claude_messages(
+    raw: dict[str, Any],
+    message: dict[str, Any],
+    session_id: str,
+    turn_id: str,
+    timestamp: str | None,
+    source_id: str,
+    raw_event_id: str,
+) -> list[dict[str, Any]]:
+    role = str(message.get("role") or raw.get("type") or "unknown")
+    content = message.get("content")
+    blocks: list[tuple[str, str]] = []
+    if isinstance(content, str):
+        blocks.append((role, content))
+    elif isinstance(content, list):
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            text = block.get("text") or block.get("content")
+            if isinstance(text, str) and text.strip():
+                blocks.append((role if block.get("type") != "tool_result" else "tool", text))
+    for key in ("lastPrompt", "content"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            blocks.append(("user" if key == "lastPrompt" else role, value))
+    return _message_rows(blocks, session_id, turn_id, timestamp, source_id, raw_event_id)
+
+
+def _message_rows(
+    blocks: list[tuple[str, str]],
+    session_id: str,
+    turn_id: str,
+    timestamp: str | None,
+    source_id: str,
+    raw_event_id: str,
+) -> list[dict[str, Any]]:
+    rows = []
+    for pos, (role, text) in enumerate(blocks[:50]):
+        stats = _text_stats(text)
+        rows.append({
+            "message_id": _stable_id(raw_event_id, "message", str(pos), role, stats["hash"]),
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "role": role,
+            "timestamp_utc": timestamp,
+            "text": text,
+            "char_count": stats["chars"],
+            "byte_count": stats["bytes"],
+            "line_count": stats["lines"],
+            "content_hash": stats["hash"],
+            "estimated_tokens": _estimate_tokens(text),
+            "token_quality": "estimated",
+            "source_id": source_id,
+            "raw_event_id": raw_event_id,
+        })
+    return rows
+
+
+def _context_from_messages(
+    messages: list[dict[str, Any]], source_name: str, timestamp: str | None, raw_event_id: str
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "block_id": _stable_id(msg["message_id"], "context"),
+            "session_id": msg["session_id"],
+            "turn_id": msg["turn_id"],
+            "category": _context_category(str(msg["role"])),
+            "source": source_name,
+            "text": msg["text"],
+            "char_count": msg["char_count"],
+            "byte_count": msg["byte_count"],
+            "line_count": msg["line_count"],
+            "content_hash": msg["content_hash"],
+            "estimated_tokens": msg["estimated_tokens"],
+            "token_quality": "estimated",
+            "first_seen_utc": timestamp,
+            "raw_event_id": raw_event_id,
+        }
+        for msg in messages
+    ]
+
+
+def _codex_tools(
+    payload: dict[str, Any], session_id: str, turn_id: str, raw_event_id: str
+) -> list[dict[str, Any]]:
+    ptype = str(payload.get("type") or "")
+    tool_types = {
+        "function_call",
+        "function_call_output",
+        "custom_tool_call",
+        "custom_tool_call_output",
+        "tool_search_call",
+        "tool_search_output",
+        "web_search_call",
+        "image_generation_call",
+    }
+    if ptype not in tool_types:
+        return []
+    name = str(payload.get("name") or payload.get("type") or "unknown_tool")
+    output = payload.get("output")
+    output_text = output if isinstance(output, str) else None
+    stats = _text_stats(output_text or "")
+    return [{
+        "tool_call_id": str(payload.get("call_id") or _stable_id(raw_event_id, "tool")),
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "tool_name": name,
+        "arguments_json": json.dumps(
+            payload.get("arguments") or payload.get("input") or {}, ensure_ascii=False
+        ),
+        "output_text": output_text,
+        "status": str(payload.get("status") or "") or None,
+        "error": str(payload.get("error") or "") or None,
+        "duration_ms": _int_or_none(payload.get("duration_ms")),
+        "output_chars": stats["chars"],
+        "output_bytes": stats["bytes"],
+        "output_lines": stats["lines"],
+        "content_hash": stats["hash"],
+        "raw_event_id": raw_event_id,
+    }]
+
+
+def _claude_tools(
+    message: dict[str, Any], session_id: str, turn_id: str, raw_event_id: str
+) -> list[dict[str, Any]]:
+    tools = []
+    content = message.get("content")
+    if not isinstance(content, list):
+        return tools
+    for i, block in enumerate(content):
+        if not isinstance(block, dict) or block.get("type") not in {"tool_use", "tool_result"}:
+            continue
+        output = block.get("content")
+        output_text = output if isinstance(output, str) else None
+        stats = _text_stats(output_text or "")
+        tools.append({
+            "tool_call_id": str(
+                block.get("id") or block.get("tool_use_id") or _stable_id(raw_event_id, "tool", str(i))
+            ),
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "tool_name": str(block.get("name") or block.get("type") or "unknown_tool"),
+            "arguments_json": json.dumps(block.get("input") or {}, ensure_ascii=False),
+            "output_text": output_text,
+            "status": "error" if block.get("is_error") else None,
+            "error": None,
+            "duration_ms": None,
+            "output_chars": stats["chars"],
+            "output_bytes": stats["bytes"],
+            "output_lines": stats["lines"],
+            "content_hash": stats["hash"],
+            "raw_event_id": raw_event_id,
+        })
+    return tools
+
+
+def _event_bundle(
+    session: dict[str, Any],
+    turn: dict[str, Any],
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    commands: list[dict[str, Any]],
+    contexts: list[dict[str, Any]],
+    source: dict[str, Any],
+    session_id: str,
+    index: int,
+    offset: int,
+    timestamp: str | None,
+    event_type: str,
+    raw_hash: str,
+    raw_json: str,
+    raw_event_id: str,
+) -> dict[str, Any]:
+    return {
+        "session": session,
+        "turn": turn,
+        "messages": messages,
+        "tools": tools,
+        "commands": commands,
+        "contexts": contexts,
+        "raw_event": {
+            "raw_event_id": raw_event_id,
+            "source_id": source["source_id"],
+            "session_id": session_id,
+            "event_index": index,
+            "byte_offset": offset,
+            "timestamp_utc": timestamp,
+            "event_type": event_type,
+            "content_hash": raw_hash,
+            "raw_json": raw_json,
+        },
+    }
+
+
+def _role_for_codex_payload(payload: dict[str, Any], key: str) -> str:
+    if key == "output":
+        return "tool"
+    if payload.get("type") == "reasoning" or key == "summary":
+        return "reasoning"
+    return str(payload.get("role") or "unknown")
+
+
+def _session_id_from_rollout_path(source_path: str) -> str | None:
+    match = re.search(r"rollout-[^.\\\/]+-([0-9a-f-]{36})\.jsonl$", source_path)
+    return match.group(1) if match else None
 
 
 def _extract_texts(value: Any, inherited_role: str | None = None) -> list[tuple[str, str]]:
