@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..deps import get_forensics_service
 from ...services.forensics_service import ForensicsService
+from ..deps import get_forensics_service
 
 router = APIRouter(tags=["forensics"])
 

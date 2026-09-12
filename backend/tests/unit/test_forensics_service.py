@@ -49,6 +49,8 @@ def test_forensics_refresh_ingests_jsonl_without_generation(tmp_path, tmp_data_d
     )
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "missing_claude"))
+    monkeypatch.setenv("CCM_FREE_AI_REPO", str(tmp_path / "missing_free_ai"))
+    monkeypatch.setenv("CCM_ANTIGRAVITY_USAGE_SNAPSHOT", str(tmp_path / "missing_antigravity_usage.txt"))
 
     from claude_codex_monitor.db.store import Store
     from claude_codex_monitor.services.forensics_service import ForensicsService
@@ -75,6 +77,8 @@ def test_forensics_refresh_ingests_jsonl_without_generation(tmp_path, tmp_data_d
 def test_full_export_requires_warning_ack(tmp_path, tmp_data_dir, monkeypatch):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty_codex"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "empty_claude"))
+    monkeypatch.setenv("CCM_FREE_AI_REPO", str(tmp_path / "missing_free_ai"))
+    monkeypatch.setenv("CCM_ANTIGRAVITY_USAGE_SNAPSHOT", str(tmp_path / "missing_antigravity_usage.txt"))
     monkeypatch.setenv("CCM_DATA_DIR", str(tmp_data_dir))
 
     from claude_codex_monitor.db.store import Store

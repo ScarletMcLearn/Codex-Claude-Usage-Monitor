@@ -114,7 +114,14 @@ def test_profile_refresh_unknown_profile_404(client):
     assert r.status_code == 404
 
 
-def test_forensics_api_zero_token_empty_state(client):
+def test_forensics_api_zero_token_empty_state(tmp_data_dir, tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty_codex"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "empty_claude"))
+    monkeypatch.setenv("CCM_FREE_AI_REPO", str(tmp_path / "missing_free_ai"))
+    monkeypatch.setenv("CCM_ANTIGRAVITY_USAGE_SNAPSHOT", str(tmp_path / "missing_antigravity_usage.txt"))
+    from claude_codex_monitor.app import create_app
+
+    client = TestClient(create_app(enable_lifespan=False))
     r = client.get("/api/forensics/overview")
     assert r.status_code == 200
     assert r.json()["zero_token_counters"]["monitor_model_generation_requests"] == 0

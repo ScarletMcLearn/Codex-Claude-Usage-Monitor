@@ -507,17 +507,17 @@ class Store:
                              token_quality)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(session_id) DO UPDATE SET
-                            ended_at_utc = COALESCE(excluded.ended_at_utc, forensic_sessions.ended_at_utc),
-                            model = COALESCE(excluded.model, forensic_sessions.model),
-                            project_path = COALESCE(excluded.project_path, forensic_sessions.project_path),
-                            repository_path = COALESCE(excluded.repository_path, forensic_sessions.repository_path),
-                            branch = COALESCE(excluded.branch, forensic_sessions.branch),
-                            raw_event_count = forensic_sessions.raw_event_count + excluded.raw_event_count,
-                            input_tokens = COALESCE(excluded.input_tokens, forensic_sessions.input_tokens),
-                            output_tokens = COALESCE(excluded.output_tokens, forensic_sessions.output_tokens),
-                            total_tokens = COALESCE(excluded.total_tokens, forensic_sessions.total_tokens),
-                            cached_tokens = COALESCE(excluded.cached_tokens, forensic_sessions.cached_tokens),
-                            reasoning_tokens = COALESCE(excluded.reasoning_tokens, forensic_sessions.reasoning_tokens),
+                            ended_at_utc = COALESCE(excluded.ended_at_utc, ended_at_utc),
+                            model = COALESCE(excluded.model, model),
+                            project_path = COALESCE(excluded.project_path, project_path),
+                            repository_path = COALESCE(excluded.repository_path, repository_path),
+                            branch = COALESCE(excluded.branch, branch),
+                            raw_event_count = raw_event_count + excluded.raw_event_count,
+                            input_tokens = COALESCE(excluded.input_tokens, input_tokens),
+                            output_tokens = COALESCE(excluded.output_tokens, output_tokens),
+                            total_tokens = COALESCE(excluded.total_tokens, total_tokens),
+                            cached_tokens = COALESCE(excluded.cached_tokens, cached_tokens),
+                            reasoning_tokens = COALESCE(excluded.reasoning_tokens, reasoning_tokens),
                             token_quality = excluded.token_quality
                         """,
                         _session_tuple(row),
@@ -535,7 +535,9 @@ class Store:
                     placeholders = ", ".join("?" for _ in columns)
                     names = ", ".join(columns)
                     sql = f"INSERT OR IGNORE INTO {table} ({names}) VALUES ({placeholders})"
-                    connection.executemany(sql, [tuple(row.get(c) for c in columns) for row in rows])
+                    connection.executemany(
+                        sql, [tuple(_sqlite_value(row.get(c)) for c in columns) for row in rows]
+                    )
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")
@@ -648,7 +650,11 @@ class Store:
 
     def list_forensic_table(self, table: str) -> list[dict[str, Any]]:
         allowed = {
-            "agents": "SELECT agent, provider, model, COUNT(*) AS sessions, SUM(COALESCE(total_tokens, 0)) AS total_tokens FROM forensic_sessions GROUP BY agent, provider, model",
+            "agents": (
+                "SELECT agent, provider, model, COUNT(*) AS sessions, "
+                "SUM(COALESCE(total_tokens, 0)) AS total_tokens "
+                "FROM forensic_sessions GROUP BY agent, provider, model"
+            ),
             "sessions": "SELECT * FROM forensic_sessions",
             "turns": "SELECT * FROM forensic_turns",
             "messages": "SELECT * FROM forensic_messages",
@@ -707,3 +713,9 @@ def _session_tuple(row: dict[str, Any]) -> tuple[Any, ...]:
         row.get("total_tokens"), row.get("cached_tokens"), row.get("reasoning_tokens"),
         row.get("token_quality", "unknown"),
     )
+
+
+def _sqlite_value(value: Any) -> Any:
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False)
+    return value

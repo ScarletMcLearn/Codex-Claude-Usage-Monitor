@@ -39,10 +39,10 @@ Everything runs on `127.0.0.1` only. Nothing leaves the machine.
 +---------------------------v-----------------------------------+
 |                    FastAPI app (uvicorn, 127.0.0.1 only)      |
 |  routers: health, providers, profiles, discovery, history,    |
-|           summary, settings, diagnostics                      |
+|           summary, settings, diagnostics, forensics           |
 |                                                                |
 |  services: discovery / usage / history / settings /           |
-|            diagnostics / notification / forecast              |
+|            diagnostics / notification / forecast / forensics  |
 |                                                                |
 |  scheduler: asyncio background loop (discover -> refresh ->   |
 |             periodic refresh, single lock, backoff on error)  |
@@ -67,8 +67,8 @@ Mermaid version (renders on GitHub):
 ```mermaid
 flowchart TD
     UI["React dashboard (127.0.0.1:8787)"] -->|REST /api/*| API["FastAPI app"]
-    API --> Routers["Routers: health/providers/profiles/discovery/history/summary/settings/diagnostics"]
-    Routers --> Services["Services: discovery/usage/history/settings/diagnostics/notification/forecast"]
+    API --> Routers["Routers: health/providers/profiles/discovery/history/summary/settings/diagnostics/forensics"]
+    Routers --> Services["Services: discovery/usage/history/settings/diagnostics/notification/forecast/forensics"]
     Services --> Scheduler["Background scheduler (asyncio)"]
     Services --> ClaudeAdapter["ClaudeProviderAdapter"]
     Services --> CodexAdapter["CodexProviderAdapter"]
@@ -278,6 +278,9 @@ Frontend also has `pnpm lint` (oxlint) and `tsc -b` wired into `pnpm build`.
 - Tables: `providers`, `profiles`, `usage_snapshots`, `settings`,
   `refresh_log`, `sent_notifications`. See
   `backend/src/claude_codex_monitor/db/schema.sql` for the full schema.
+- Forensic tables are prefixed with `forensic_` in the same SQLite DB.
+  See `docs/forensic-monitoring.md` for the passive-source support matrix,
+  token-quality semantics, export behavior, and zero-token audit.
 - Retention: configurable in Settings (`history_retention_days`, default 90).
   A sweep runs at most once every 24h and **always writes a `refresh_log` row
   before deleting anything**.
@@ -314,6 +317,11 @@ Pydantic models in `backend/src/claude_codex_monitor/models/`.
 | GET | `/api/summary` | Dashboard summary counters |
 | GET/PATCH | `/api/settings` | Read/update settings |
 | GET | `/api/diagnostics/{profile_key}` | Sanitized diagnostics for one profile |
+| POST | `/api/forensics/refresh` | Passive local forensic ingestion; no model/API generation |
+| GET | `/api/forensics/overview` | Counts, expensive turns, repeated context, zero-token counters |
+| GET | `/api/forensics/sessions` | Paginated forensic session list |
+| GET | `/api/forensics/sessions/{session_id}` | Bounded forensic detail for one session |
+| POST | `/api/forensics/export` | Local summary/full forensic ZIP export |
 | DELETE | `/api/history` | Delete all history (`confirm=true` required) |
 
 ## Provider adapter interface

@@ -13,9 +13,9 @@ from ..scheduler import RefreshScheduler
 from ..services.diagnostics_service import DiagnosticsService
 from ..services.discovery_service import DiscoveryService
 from ..services.forecast_service import ForecastService
+from ..services.forensics_service import ForensicsService
 from ..services.history_service import HistoryService
 from ..services.notification_service import NotificationService
-from ..services.forensics_service import ForensicsService
 from ..services.settings_service import SettingsService
 from ..services.usage_service import UsageService
 

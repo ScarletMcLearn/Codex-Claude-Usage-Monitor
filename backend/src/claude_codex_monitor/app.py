@@ -26,9 +26,9 @@ from .adapters.fake_adapter import (
 from .api.routers import (
     diagnostics,
     discovery,
+    forensics,
     health,
     history,
-    forensics,
     profiles,
     providers,
     summary,

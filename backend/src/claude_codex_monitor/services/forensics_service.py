@@ -16,9 +16,9 @@ from pathlib import Path
 from typing import Any
 
 from .. import paths
+from ..adapters.free_ai_adapter import credible_repo, free_ai_repo_path, read_usage_samples
 from ..db.store import Store
 from ..models.profile import sanitize_path
-from ..adapters.free_ai_adapter import free_ai_repo_path, read_usage_samples, credible_repo
 from ..vendor.antigravity.usage_command import read_usage_snapshot, usage_snapshot_path
 
 PARSER_VERSION = "forensics.v1"
@@ -61,7 +61,10 @@ class ForensicsService:
 
     def export(self, *, export_type: str, warning_ack: bool) -> dict[str, Any]:
         if export_type == "full" and not warning_ack:
-            raise ValueError("Full forensic export may contain prompts, source code, command output, and model output. Set warning_ack=true.")
+            raise ValueError(
+                "Full forensic export may contain prompts, source code, command output, "
+                "and model output. Set warning_ack=true."
+            )
         export_dir = paths.data_dir() / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -74,15 +77,23 @@ class ForensicsService:
                 "created_at_utc": datetime.now(UTC).isoformat(),
                 "export_type": export_type,
                 "zero_ai_tokens": True,
-                "warning": "Full exports can contain sensitive local prompts, responses, code, and command output.",
+                "warning": (
+                    "Full exports can contain sensitive local prompts, responses, code, "
+                    "and command output."
+                ),
             }
             zf.writestr("manifest.json", json.dumps(manifest, indent=2))
             zf.writestr("summary.json", json.dumps(self.overview(), indent=2))
             for table in tables:
-                lines = "\n".join(json.dumps(row, ensure_ascii=False) for row in self._store.list_forensic_table(table))
+                table_rows = self._store.list_forensic_table(table)
+                lines = "\n".join(json.dumps(row, ensure_ascii=False) for row in table_rows)
                 zf.writestr(f"{table}.jsonl", lines + ("\n" if lines else ""))
             zf.writestr("report.md", _report_markdown(self.overview()))
-        return {"path": str(out), "export_type": export_type, "created_at_utc": datetime.now(UTC).isoformat()}
+        return {
+            "path": str(out),
+            "export_type": export_type,
+            "created_at_utc": datetime.now(UTC).isoformat(),
+        }
 
     def _discover_sources(self) -> list[dict[str, Any]]:
         candidates: list[tuple[str, Path, str]] = []
@@ -92,7 +103,9 @@ class ForensicsService:
             for sub in ("sessions", "projects", "history"):
                 base = root / sub
                 if base.is_dir():
-                    candidates.extend((agent, p, "jsonl") for p in base.rglob("*.jsonl") if p.is_file())
+                    candidates.extend(
+                        (agent, p, "jsonl") for p in base.rglob("*.jsonl") if p.is_file()
+                    )
         sources = []
         for agent, path, source_type in candidates:
             try:
@@ -174,33 +187,52 @@ class ForensicsService:
             source["source_id"], checkpoint_offset=offset, events_processed=processed,
             events_skipped=skipped, malformed_events=malformed,
         )
-        return {"events_processed": processed, "events_skipped": skipped, "malformed_events": malformed}
+        return {
+            "events_processed": processed,
+            "events_skipped": skipped,
+            "malformed_events": malformed,
+        }
 
     def _ingest_free_ai_summary(self) -> int:
         repo = free_ai_repo_path()
         if not credible_repo(repo):
             return 0
         source_id = _stable_id("free_ai", str(repo / "artifacts" / "logs"))
-        now = datetime.now(UTC).isoformat()
-        self._store.upsert_forensic_source({
-            "source_id": source_id, "agent": "free_ai", "source_type": "router_logs",
-            "source_path": sanitize_path(str(repo / "artifacts" / "logs")),
-            "parser_version": PARSER_VERSION,
-        })
+        self._store.upsert_forensic_source(
+            {
+                "source_id": source_id,
+                "agent": "free_ai",
+                "source_type": "router_logs",
+                "source_path": sanitize_path(str(repo / "artifacts" / "logs")),
+                "parser_version": PARSER_VERSION,
+            }
+        )
         sessions = []
         for sample in read_usage_samples(repo):
             sid = _stable_id("free_ai", sample.provider_id, sample.model)
-            sessions.append({
-                "session_id": sid, "agent": "free_ai", "provider": sample.provider_id,
-                "model": sample.model, "project_path": sanitize_path(str(repo)),
-                "started_at_utc": sample.latest_log_mtime_utc.isoformat(),
-                "ended_at_utc": sample.latest_log_mtime_utc.isoformat(),
-                "source_id": source_id, "raw_event_count": sample.count,
-                "token_quality": "unknown",
-            })
+            sessions.append(
+                {
+                    "session_id": sid,
+                    "agent": "free_ai",
+                    "provider": sample.provider_id,
+                    "model": sample.model,
+                    "project_path": sanitize_path(str(repo)),
+                    "started_at_utc": sample.latest_log_mtime_utc.isoformat(),
+                    "ended_at_utc": sample.latest_log_mtime_utc.isoformat(),
+                    "source_id": source_id,
+                    "raw_event_count": sample.count,
+                    "token_quality": "unknown",
+                }
+            )
         if sessions:
             self._store.insert_forensic_rows(
-                sessions=sessions, turns=[], messages=[], tools=[], commands=[], contexts=[], raw_events=[]
+                sessions=sessions,
+                turns=[],
+                messages=[],
+                tools=[],
+                commands=[],
+                contexts=[],
+                raw_events=[],
             )
             self._store.update_forensic_source_checkpoint(
                 source_id, checkpoint_offset=0, events_processed=len(sessions),
@@ -214,30 +246,60 @@ class ForensicsService:
             return 0
         source_path = usage_snapshot_path()
         source_id = _stable_id("antigravity", str(source_path))
-        self._store.upsert_forensic_source({
-            "source_id": source_id, "agent": "antigravity", "source_type": "usage_snapshot",
-            "source_path": sanitize_path(str(source_path)), "parser_version": PARSER_VERSION,
-        })
+        self._store.upsert_forensic_source(
+            {
+                "source_id": source_id,
+                "agent": "antigravity",
+                "source_type": "usage_snapshot",
+                "source_path": sanitize_path(str(source_path)),
+                "parser_version": PARSER_VERSION,
+            }
+        )
         session_id = _stable_id("antigravity", "usage_snapshot")
-        sessions = [{
-            "session_id": session_id, "agent": "antigravity", "provider": "google",
-            "started_at_utc": datetime.now(UTC).isoformat(), "ended_at_utc": datetime.now(UTC).isoformat(),
-            "source_id": source_id, "raw_event_count": len(snapshot.windows), "token_quality": "unknown",
-        }]
+        observed_at = datetime.now(UTC).isoformat()
+        sessions = [
+            {
+                "session_id": session_id,
+                "agent": "antigravity",
+                "provider": "google",
+                "started_at_utc": observed_at,
+                "ended_at_utc": observed_at,
+                "source_id": source_id,
+                "raw_event_count": len(snapshot.windows),
+                "token_quality": "unknown",
+            }
+        ]
         self._store.insert_forensic_rows(
-            sessions=sessions, turns=[], messages=[], tools=[], commands=[], contexts=[], raw_events=[]
+            sessions=sessions,
+            turns=[],
+            messages=[],
+            tools=[],
+            commands=[],
+            contexts=[],
+            raw_events=[],
         )
         return 1
 
 
-def _normalize_event(source: dict[str, Any], raw: dict[str, Any], offset: int, index: int) -> dict[str, Any]:
+def _normalize_event(
+    source: dict[str, Any], raw: dict[str, Any], offset: int, index: int
+) -> dict[str, Any]:
     raw_json = json.dumps(raw, ensure_ascii=False, sort_keys=True)
     raw_hash = _sha(raw_json)
     raw_event_id = _stable_id(source["source_id"], str(offset), raw_hash)
     ts = _first_str(raw, ("timestamp", "created_at", "createdAt", "time", "ts"))
     timestamp = _normalize_ts(ts)
+    session_keys = (
+        "session_id",
+        "sessionId",
+        "conversation_id",
+        "conversationId",
+        "thread_id",
+        "threadId",
+        "id",
+    )
     session_id = str(
-        _nested(raw, ("session_id", "sessionId", "conversation_id", "conversationId", "thread_id", "threadId", "id"))
+        _nested(raw, session_keys)
         or _stable_id(source["agent"], source["source_path"])
     )
     event_type = str(_nested(raw, ("type", "event", "event_type", "kind", "msg_type")) or "event")
@@ -268,7 +330,13 @@ def _normalize_event(source: dict[str, Any], raw: dict[str, Any], offset: int, i
         "context_tokens": usage.get("context_tokens"),
         "duration_ms": _int_or_none(_find_key(raw, {"duration_ms", "durationMs", "elapsed_ms"})),
         "token_quality": "reported" if any(v is not None for v in usage.values()) else "unknown",
-        "provenance_json": json.dumps({"source_id": source["source_id"], "offset": offset, "parser_version": PARSER_VERSION}),
+        "provenance_json": json.dumps(
+            {
+                "source_id": source["source_id"],
+                "offset": offset,
+                "parser_version": PARSER_VERSION,
+            }
+        ),
         "user_preview": _preview(user_text),
         "assistant_preview": _preview(assistant_text),
         "content_hash": raw_hash,
@@ -299,7 +367,9 @@ def _normalize_event(source: dict[str, Any], raw: dict[str, Any], offset: int, i
     tools = _extract_tools(raw, session_id, turn_id, raw_event_id)
     commands = _extract_commands(raw, session_id, turn_id, raw_event_id)
     session = {
-        "session_id": session_id, "agent": source["agent"], "provider": _provider_for(source["agent"]),
+        "session_id": session_id,
+        "agent": source["agent"],
+        "provider": _provider_for(source["agent"]),
         "model": model, "project_path": sanitize_path(str(cwd)) if cwd else None,
         "started_at_utc": timestamp, "ended_at_utc": timestamp, "source_id": source["source_id"],
         "raw_event_count": 1, **usage, "token_quality": turn["token_quality"],
@@ -312,7 +382,8 @@ def _normalize_event(source: dict[str, Any], raw: dict[str, Any], offset: int, i
         "commands": commands,
         "contexts": contexts,
         "raw_event": {
-            "raw_event_id": raw_event_id, "source_id": source["source_id"],
+            "raw_event_id": raw_event_id,
+            "source_id": source["source_id"],
             "session_id": session_id, "event_index": index, "byte_offset": offset,
             "timestamp_utc": timestamp, "event_type": event_type,
             "content_hash": raw_hash, "raw_json": raw_json,
@@ -327,7 +398,11 @@ def _find_usage(raw: dict[str, Any]) -> dict[str, int | None]:
         "output_tokens": ("output_tokens", "completion_tokens", "outputTokens"),
         "total_tokens": ("total_tokens", "totalTokens"),
         "cached_tokens": ("cached_tokens", "cache_read_tokens", "cachedInputTokens"),
-        "cache_write_tokens": ("cache_creation_input_tokens", "cache_write_tokens", "cacheCreationInputTokens"),
+        "cache_write_tokens": (
+            "cache_creation_input_tokens",
+            "cache_write_tokens",
+            "cacheCreationInputTokens",
+        ),
         "reasoning_tokens": ("reasoning_tokens", "thinking_tokens", "reasoningTokens"),
         "context_tokens": ("context_tokens", "current_context_tokens", "contextTokens"),
     }
@@ -354,7 +429,9 @@ def _extract_texts(value: Any, inherited_role: str | None = None) -> list[tuple[
     return found[:50]
 
 
-def _extract_tools(raw: dict[str, Any], session_id: str, turn_id: str, raw_event_id: str) -> list[dict[str, Any]]:
+def _extract_tools(
+    raw: dict[str, Any], session_id: str, turn_id: str, raw_event_id: str
+) -> list[dict[str, Any]]:
     tools = []
     for i, item in enumerate(_walk_dicts(raw)):
         name = item.get("tool") or item.get("tool_name") or item.get("name")
@@ -366,7 +443,9 @@ def _extract_tools(raw: dict[str, Any], session_id: str, turn_id: str, raw_event
         tools.append({
             "tool_call_id": str(item.get("id") or _stable_id(raw_event_id, "tool", str(i))),
             "session_id": session_id, "turn_id": turn_id, "tool_name": str(name),
-            "arguments_json": json.dumps(item.get("arguments") or item.get("input") or {}, ensure_ascii=False),
+            "arguments_json": json.dumps(
+                item.get("arguments") or item.get("input") or {}, ensure_ascii=False
+            ),
             "output_text": output_text, "status": str(item.get("status") or "") or None,
             "error": str(item.get("error") or "") or None,
             "duration_ms": _int_or_none(item.get("duration_ms")),
@@ -377,16 +456,21 @@ def _extract_tools(raw: dict[str, Any], session_id: str, turn_id: str, raw_event
     return tools
 
 
-def _extract_commands(raw: dict[str, Any], session_id: str, turn_id: str, raw_event_id: str) -> list[dict[str, Any]]:
+def _extract_commands(
+    raw: dict[str, Any], session_id: str, turn_id: str, raw_event_id: str
+) -> list[dict[str, Any]]:
     commands = []
     for i, item in enumerate(_walk_dicts(raw)):
         cmd = item.get("cmd") or item.get("command")
         if not isinstance(cmd, str) or not cmd.strip():
             continue
-        if item.get("tool") and "shell" not in str(item.get("tool")).lower() and "exec" not in str(item.get("tool")).lower():
+        tool_name = str(item.get("tool") or "").lower()
+        if item.get("tool") and "shell" not in tool_name and "exec" not in tool_name:
             continue
-        stdout = item.get("stdout") if isinstance(item.get("stdout"), str) else ""
-        stderr = item.get("stderr") if isinstance(item.get("stderr"), str) else ""
+        stdout_value = item.get("stdout")
+        stderr_value = item.get("stderr")
+        stdout = stdout_value if isinstance(stdout_value, str) else ""
+        stderr = stderr_value if isinstance(stderr_value, str) else ""
         combined = stdout + ("\n" if stdout and stderr else "") + stderr
         stats = _text_stats(combined)
         commands.append({
@@ -499,7 +583,13 @@ def _context_category(role: str) -> str:
 
 
 def _provider_for(agent: str) -> str | None:
-    return {"claude": "anthropic", "codex": "openai", "free_ai": "free_ai", "antigravity": "google"}.get(agent)
+    providers = {
+        "claude": "anthropic",
+        "codex": "openai",
+        "free_ai": "free_ai",
+        "antigravity": "google",
+    }
+    return providers.get(agent)
 
 
 def _sha(value: str) -> str:
