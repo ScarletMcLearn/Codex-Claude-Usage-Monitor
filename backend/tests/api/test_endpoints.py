@@ -181,3 +181,59 @@ def test_forensics_api_session_turn_hotspots_and_export(tmp_data_dir, tmp_path, 
     r = client.post("/api/forensics/export?export_type=full&warning_ack=true")
     assert r.status_code == 200
     assert r.json()["path"].endswith(".zip")
+
+
+def test_forensics_sessions_multi_page_ordering_and_filters(tmp_data_dir):
+    from claude_codex_monitor.app import create_app
+
+    app = create_app(enable_lifespan=False)
+    app.state.store.upsert_forensic_source({
+        "source_id": "src",
+        "agent": "codex",
+        "source_type": "test",
+        "source_path": "test",
+        "parser_version": "test",
+    })
+    sessions = [
+        {
+            "session_id": f"s{i}",
+            "agent": "codex" if i % 2 else "claude",
+            "provider": "openai",
+            "model": "m",
+            "started_at_utc": "2026-09-12T00:00:00+00:00",
+            "ended_at_utc": "2026-09-12T00:00:00+00:00",
+            "source_id": "src",
+            "raw_event_count": 1,
+            "total_tokens": i,
+            "token_quality": "reported",
+        }
+        for i in range(7)
+    ]
+    app.state.store.insert_forensic_rows(
+        sessions=sessions,
+        turns=[],
+        messages=[],
+        tools=[],
+        commands=[],
+        contexts=[],
+        raw_events=[],
+    )
+    client = TestClient(app)
+
+    pages = [
+        client.get("/api/forensics/sessions?limit=3&offset=0").json(),
+        client.get("/api/forensics/sessions?limit=3&offset=3").json(),
+        client.get("/api/forensics/sessions?limit=3&offset=6").json(),
+    ]
+    ids = [row["session_id"] for page in pages for row in page["items"]]
+
+    assert [len(page["items"]) for page in pages] == [3, 3, 1]
+    assert [page["has_more"] for page in pages] == [True, True, False]
+    assert ids == sorted(ids)
+    assert len(ids) == len(set(ids)) == 7
+
+    filtered = client.get("/api/forensics/sessions?limit=3&offset=0&agent=codex").json()
+    assert all(row["agent"] == "codex" for row in filtered["items"])
+    empty = client.get("/api/forensics/sessions?limit=3&offset=99").json()
+    assert empty["items"] == []
+    assert empty["has_more"] is False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import zipfile
 
 
 def test_forensics_refresh_ingests_jsonl_without_generation(tmp_path, tmp_data_dir, monkeypatch):
@@ -259,3 +260,254 @@ def test_claude_real_shape_fixture_parses_usage_and_tools(tmp_path, tmp_data_dir
     assert detail["file_accesses"][0]["access_kind"] == "read"
     assert detail["relationships"][0]["relationship_type"] == "parent_message"
     assert any(row["role"] == "assistant" for row in detail["turns"])
+
+
+def test_relationship_rollup_is_cycle_safe_and_conservative(tmp_data_dir):
+    from claude_codex_monitor.db.store import Store
+
+    store = Store(path=tmp_data_dir / "history.sqlite3")
+    store.upsert_forensic_source({
+        "source_id": "src",
+        "agent": "claude",
+        "source_type": "test",
+        "source_path": "test",
+        "parser_version": "test",
+    })
+    sessions = [
+        {
+            "session_id": sid,
+            "agent": "claude",
+            "provider": "anthropic",
+            "source_id": "src",
+            "raw_event_count": 1,
+            "input_tokens": tokens,
+            "output_tokens": 0,
+            "total_tokens": tokens,
+            "token_quality": "reported",
+        }
+        for sid, tokens in (("root", 100), ("child-a", 40), ("child-b", 20), ("provenance", 999))
+    ]
+    relationships = [
+        {
+            "relationship_id": "r1",
+            "source": "test",
+            "parent_session_id": "root",
+            "child_session_id": "child-a",
+            "child_agent": "claude",
+            "relationship_type": "sidechain_parent_message",
+            "evidence_json": "{}",
+            "confidence": "observed",
+        },
+        {
+            "relationship_id": "r1-dupe",
+            "source": "test",
+            "parent_session_id": "root",
+            "child_session_id": "child-a",
+            "child_agent": "claude",
+            "relationship_type": "sidechain_parent_message",
+            "evidence_json": "{}",
+            "confidence": "observed",
+        },
+        {
+            "relationship_id": "r2",
+            "source": "test",
+            "parent_session_id": "child-a",
+            "child_session_id": "child-b",
+            "child_agent": "claude",
+            "relationship_type": "sidechain_parent_message",
+            "evidence_json": "{}",
+            "confidence": "observed",
+        },
+        {
+            "relationship_id": "cycle",
+            "source": "test",
+            "parent_session_id": "child-b",
+            "child_session_id": "root",
+            "child_agent": "claude",
+            "relationship_type": "sidechain_parent_message",
+            "evidence_json": "{}",
+            "confidence": "observed",
+        },
+        {
+            "relationship_id": "self",
+            "source": "test",
+            "parent_session_id": "root",
+            "child_session_id": "root",
+            "child_agent": "claude",
+            "relationship_type": "sidechain_parent_message",
+            "evidence_json": "{}",
+            "confidence": "observed",
+        },
+        {
+            "relationship_id": "parent-only",
+            "source": "test",
+            "parent_session_id": "root",
+            "child_session_id": "provenance",
+            "child_agent": "claude",
+            "relationship_type": "parent_message",
+            "evidence_json": "{}",
+            "confidence": "observed",
+        },
+    ]
+    store.insert_forensic_rows(
+        sessions=sessions,
+        turns=[],
+        messages=[],
+        tools=[],
+        commands=[],
+        contexts=[],
+        raw_events=[],
+        relationships=relationships,
+    )
+
+    rollup = store.forensic_usage_rollup("root")
+
+    assert rollup["direct_usage"]["total_tokens"] == 100
+    assert rollup["descendant_usage"]["total_tokens"] == 60
+    assert rollup["inclusive_usage"]["total_tokens"] == 160
+    assert rollup["descendant_session_ids"] == ["child-a", "child-b"]
+    assert rollup["quality"] == "derived"
+    assert rollup["cycles"]
+    assert {edge["reason"] for edge in rollup["skipped_edges"]} >= {
+        "duplicate_edge",
+        "ineligible_relationship_type",
+        "self_or_missing_endpoint",
+    }
+
+
+def test_collector_checkpoint_resilience_matrix(tmp_path, tmp_data_dir, monkeypatch):
+    codex_home = tmp_path / "codex_home"
+    session_dir = codex_home / "sessions"
+    session_dir.mkdir(parents=True)
+    session_file = session_dir / "session.jsonl"
+    event1 = {"timestamp": "2026-09-12T00:00:00Z", "type": "user_message", "session_id": "s1", "content": "a"}
+    event2 = {"timestamp": "2026-09-12T00:00:01Z", "type": "assistant_message", "session_id": "s1", "content": "b"}
+    session_file.write_text(json.dumps(event1) + "\n", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "missing_claude"))
+    monkeypatch.setenv("CCM_FREE_AI_REPO", str(tmp_path / "missing_free_ai"))
+    monkeypatch.setenv("CCM_ANTIGRAVITY_USAGE_SNAPSHOT", str(tmp_path / "missing_antigravity_usage.txt"))
+
+    from claude_codex_monitor.db.store import Store
+    from claude_codex_monitor.services.forensics_service import ForensicsService
+
+    store = Store(path=tmp_data_dir / "history.sqlite3")
+    service = ForensicsService(store)
+
+    assert service.refresh()["events_processed"] == 1
+    assert service.refresh()["events_processed"] == 0
+
+    with session_file.open("a", encoding="utf-8") as fh:
+        fh.write('{"type":"message","pay')
+    assert service.refresh()["events_processed"] == 0
+    assert service.overview()["counts"]["forensic_raw_events"] == 1
+
+    with session_file.open("a", encoding="utf-8") as fh:
+        fh.write('load":{}}\n')
+    assert service.refresh()["events_processed"] == 1
+
+    with session_file.open("a", encoding="utf-8") as fh:
+        fh.write("{not json}\n")
+        fh.write(json.dumps(event2) + "\n")
+    result = service.refresh()
+    assert result["events_processed"] == 1
+    assert result["malformed_events"] == 1
+
+    session_file.write_text(json.dumps(event1) + "\n", encoding="utf-8")
+    assert service.refresh()["events_processed"] == 1
+    diag = service.source_diagnostics()[0]
+    assert diag["checkpoint_reset_count"] >= 1
+    assert diag["replacement_detected"] or diag["truncation_detected"]
+    assert diag["reset_reason"] in {"replacement_or_rewrite_detected", "truncation_detected"}
+
+
+def test_full_export_zip_scope_counts_and_summary_safety(tmp_path, tmp_data_dir, monkeypatch):
+    codex_home = tmp_path / "codex_home"
+    session_dir = codex_home / "sessions"
+    session_dir.mkdir(parents=True)
+    (session_dir / "session.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"timestamp": "2026-09-12T00:00:00Z", "type": "user_message", "session_id": "keep", "content": "keep prompt"}),
+                json.dumps({"timestamp": "2026-09-12T00:00:01Z", "type": "assistant_message", "session_id": "drop", "content": "drop prompt"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "missing_claude"))
+    monkeypatch.setenv("CCM_FREE_AI_REPO", str(tmp_path / "missing_free_ai"))
+    monkeypatch.setenv("CCM_ANTIGRAVITY_USAGE_SNAPSHOT", str(tmp_path / "missing_antigravity_usage.txt"))
+    monkeypatch.setenv("CCM_DATA_DIR", str(tmp_data_dir))
+
+    from claude_codex_monitor.db.store import Store
+    from claude_codex_monitor.services.forensics_service import ForensicsService
+
+    service = ForensicsService(Store(path=tmp_data_dir / "history.sqlite3"))
+    service.refresh()
+    full = service.export(export_type="full", warning_ack=True, filters={"session_id": "keep"})
+    summary = service.export(export_type="summary", warning_ack=False, filters={"session_id": "keep"})
+
+    with zipfile.ZipFile(full["path"]) as zf:
+        names = set(zf.namelist())
+        assert {
+            "manifest.json",
+            "summary.json",
+            "sessions.jsonl",
+            "turns.jsonl",
+            "messages.jsonl",
+            "tools.jsonl",
+            "commands.jsonl",
+            "context-blocks.jsonl",
+            "file-accesses.jsonl",
+            "relationships.jsonl",
+            "raw-events.jsonl",
+            "report.md",
+        } <= names
+        manifest = json.loads(zf.read("manifest.json"))
+        assert manifest["scope"]["session_ids"] == ["keep"]
+        sessions = [json.loads(line) for line in zf.read("sessions.jsonl").decode().splitlines()]
+        assert [row["session_id"] for row in sessions] == ["keep"]
+        assert manifest["record_counts"]["sessions"] == len(sessions)
+        assert all(row["session_id"] == "keep" for row in [json.loads(line) for line in zf.read("raw-events.jsonl").decode().splitlines()])
+
+    with zipfile.ZipFile(summary["path"]) as zf:
+        assert "raw-events.jsonl" not in set(zf.namelist())
+        assert "messages.jsonl" not in set(zf.namelist())
+
+
+def test_structural_revalidation_reports_counts_hashes_only(tmp_path):
+    telemetry = tmp_path / "telemetry"
+    telemetry.mkdir()
+    (telemetry / "session.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "sessionId": "s1",
+                "uuid": "a1",
+                "parentUuid": "u1",
+                "isSidechain": True,
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "secret.py"}}],
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    from claude_codex_monitor.services.telemetry_revalidation import revalidate_jsonl_roots
+
+    result = revalidate_jsonl_roots([telemetry])
+
+    assert result["model_generation_requests"] == 0
+    assert result["file_count"] == 1
+    assert result["event_count"] == 1
+    assert result["tool_count"] == 1
+    assert result["relationship_count"] == 1
+    assert result["token_field_presence_counts"] == {"input_tokens": 1, "output_tokens": 1}
+    dumped = json.dumps(result)
+    assert "secret.py" not in dumped

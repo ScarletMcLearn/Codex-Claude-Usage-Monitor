@@ -13,7 +13,8 @@ analysis. It does not call LLM APIs, start agents, or run prompt commands.
 | Free-AI | local router logs from configured Free-AI repo | Unknown unless logs expose tokens in future parser | Not captured by current log summary | Not captured | Not captured | Summary only | unknown |
 | Antigravity | copied `/usage` snapshot text file | Quota snapshot only; forensic tokens unavailable | Not captured | Not captured | Not captured | Summary only | unknown |
 
-Unsupported values remain `NULL` and render as `Unavailable from source telemetry`.
+Unsupported values remain `NULL` and render as `Unavailable`. Numeric zero
+renders as `0`; the UI must not coerce unknown values to zero.
 
 ## Observed Source Formats
 
@@ -59,11 +60,16 @@ Supported Claude event shapes:
   character-count based and never presented as billed provider tokens.
 - `unknown`: source did not expose the value.
 
+Reported, derived, estimated, and unavailable values are labeled distinctly in
+the UI. Estimated context or repeated-context tokens are never styled as
+provider-reported billing tokens.
+
 ## Storage
 
 SQLite tables are prefixed with `forensic_`:
 
-- `forensic_sources`: local file/log source, parser version, checkpoint.
+- `forensic_sources`: local file/log source, parser version, checkpoint,
+  source identity/fingerprint, reset counts/reasons, and safe diagnostics.
 - `forensic_sessions`: agent/session/model/project summary.
 - `forensic_turns`: per-event/turn token and provenance fields.
 - `forensic_messages`: locally exposed user/assistant/tool text.
@@ -79,7 +85,33 @@ SQLite tables are prefixed with `forensic_`:
 - `forensic_exports`: export metadata.
 
 Ingestion is incremental via file byte checkpoints. Append-only JSONL is safe to
-refresh repeatedly; unchanged refreshes ingest zero new events.
+refresh repeatedly; unchanged refreshes ingest zero new events. Incomplete final
+JSONL lines are not ingested and do not advance the checkpoint; once completed,
+they ingest exactly once. If a file is truncated, replaced, rewritten, or parsed
+with a new parser version, the checkpoint resets to the beginning and the source
+diagnostics record the reset reason. Identity uses Windows-compatible file stat
+fields plus a small beginning-content fingerprint; the collector avoids hashing
+entire large files during routine refresh.
+
+## Relationship Rollups
+
+Relationship evidence remains conservative. Claude `parentUuid` is a
+parent-message relationship by default and is provenance only. It does not prove
+a spawned agent/session. Sidechain-like evidence may be treated as execution
+ancestry for derived rollups.
+
+Rollup terms:
+
+- `direct_usage`: token usage directly attributed to the selected session.
+- `descendant_usage`: usage from reachable descendant sessions over eligible
+  ancestry edges.
+- `inclusive_usage`: direct plus descendant usage.
+
+Global totals still sum direct session usage only, so descendants are not counted
+twice. Rollups retain provenance: descendant IDs, relationship types used,
+skipped edges, cycles, and `quality=derived`. Cycles, duplicate edges, self-edges,
+orphans, and unsupported relationship types are reported and skipped rather than
+recursed indefinitely.
 
 ## UI
 
@@ -98,6 +130,7 @@ The dashboard includes a Token Forensics section:
 - file-access drill-down for path, operation, range, size, repetition, context
   contribution, and quality;
 - relationship evidence for parent-message/sidechain links;
+- derived direct/descendant/inclusive usage when relationship semantics justify it;
 - summary export;
 - full forensic export with warning.
 
@@ -113,7 +146,10 @@ relationships, and raw events. Full exports can contain prompts, model output,
 source code excerpts, and command output, so the UI/API require explicit warning
 acknowledgment. Exports are local ZIP files and are never uploaded automatically.
 Session, agent, provider, model, project, and date filters can scope exports;
-related rows are filtered by session IDs.
+related rows are filtered by session IDs. The manifest includes deterministic
+record counts for each included JSONL file and scope metadata. Scoped
+relationships whose other endpoint is outside the export are marked
+`external_not_included` rather than left unexplained.
 
 ## Support Matrix
 

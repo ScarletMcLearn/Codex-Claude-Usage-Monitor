@@ -80,6 +80,18 @@ class Store:
             connection.executescript(SCHEMA_SQL)
             _ensure_column(connection, "usage_snapshots", "used_units", "REAL")
             _ensure_column(connection, "usage_snapshots", "max_units", "REAL")
+            for column, column_type in (
+                ("source_identity", "TEXT"),
+                ("head_fingerprint", "TEXT"),
+                ("duplicate_events", "INTEGER NOT NULL DEFAULT 0"),
+                ("checkpoint_reset_count", "INTEGER NOT NULL DEFAULT 0"),
+                ("checkpoint_reset_reason", "TEXT"),
+                ("last_event_time_utc", "TEXT"),
+                ("rotation_detected", "INTEGER NOT NULL DEFAULT 0"),
+                ("truncation_detected", "INTEGER NOT NULL DEFAULT 0"),
+                ("replacement_detected", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                _ensure_column(connection, "forensic_sources", column, column_type)
             connection.execute(
                 "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -418,13 +430,15 @@ class Store:
                 INSERT INTO forensic_sources
                     (source_id, agent, source_type, source_path, parser_version,
                      first_seen_utc, last_seen_utc, file_size, file_mtime_utc,
-                     checkpoint_offset, events_processed, events_skipped,
-                     malformed_events, last_error)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     source_identity, head_fingerprint, checkpoint_offset,
+                     events_processed, events_skipped, malformed_events, last_error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(source_id) DO UPDATE SET
                     last_seen_utc = excluded.last_seen_utc,
                     file_size = excluded.file_size,
                     file_mtime_utc = excluded.file_mtime_utc,
+                    source_identity = excluded.source_identity,
+                    head_fingerprint = excluded.head_fingerprint,
                     last_error = excluded.last_error
                 """,
                 (
@@ -437,6 +451,8 @@ class Store:
                     row.get("last_seen_utc") or now,
                     row.get("file_size"),
                     row.get("file_mtime_utc"),
+                    row.get("source_identity"),
+                    row.get("head_fingerprint"),
                     row.get("checkpoint_offset", 0),
                     row.get("events_processed", 0),
                     row.get("events_skipped", 0),
@@ -453,6 +469,12 @@ class Store:
         events_processed: int,
         events_skipped: int,
         malformed_events: int,
+        duplicate_events: int = 0,
+        reset_reason: str | None = None,
+        last_event_time_utc: str | None = None,
+        rotation_detected: bool = False,
+        truncation_detected: bool = False,
+        replacement_detected: bool = False,
         last_error: str | None = None,
     ) -> None:
         with self._connect() as connection:
@@ -461,6 +483,13 @@ class Store:
                 UPDATE forensic_sources
                 SET checkpoint_offset = ?, events_processed = events_processed + ?,
                     events_skipped = events_skipped + ?, malformed_events = malformed_events + ?,
+                    duplicate_events = duplicate_events + ?,
+                    checkpoint_reset_count = checkpoint_reset_count + ?,
+                    checkpoint_reset_reason = ?,
+                    last_event_time_utc = COALESCE(?, last_event_time_utc),
+                    rotation_detected = CASE WHEN ? THEN 1 ELSE rotation_detected END,
+                    truncation_detected = CASE WHEN ? THEN 1 ELSE truncation_detected END,
+                    replacement_detected = CASE WHEN ? THEN 1 ELSE replacement_detected END,
                     last_ingested_utc = ?, last_error = ?
                 WHERE source_id = ?
                 """,
@@ -469,6 +498,13 @@ class Store:
                     events_processed,
                     events_skipped,
                     malformed_events,
+                    duplicate_events,
+                    1 if reset_reason else 0,
+                    reset_reason,
+                    last_event_time_utc,
+                    1 if rotation_detected else 0,
+                    1 if truncation_detected else 0,
+                    1 if replacement_detected else 0,
                     _iso(datetime.now(UTC)),
                     last_error,
                     source_id,
@@ -481,6 +517,24 @@ class Store:
                 "SELECT * FROM forensic_sources WHERE source_id = ?", (source_id,)
             ).fetchone()
         return dict(row) if row else None
+
+    def forensic_source_diagnostics(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT source_id, agent AS source, source_type, source_identity,
+                       file_size, checkpoint_offset AS stored_checkpoint,
+                       checkpoint_offset AS current_offset, last_event_time_utc,
+                       parser_version, events_processed, malformed_events,
+                       duplicate_events, checkpoint_reset_count,
+                       checkpoint_reset_reason AS reset_reason,
+                       rotation_detected, truncation_detected, replacement_detected,
+                       last_error
+                FROM forensic_sources
+                ORDER BY last_seen_utc DESC, source_id
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def insert_forensic_rows(
         self,
@@ -618,7 +672,7 @@ class Store:
                 f"""
                 SELECT * FROM forensic_sessions
                 {where}
-                ORDER BY COALESCE(started_at_utc, ended_at_utc) DESC
+                ORDER BY COALESCE(started_at_utc, ended_at_utc) DESC, session_id ASC
                 LIMIT ? OFFSET ?
                 """,
                 (*params, limit + 1, offset),
@@ -670,14 +724,91 @@ class Store:
                 """,
                 (session_id, session_id, limit),
             ).fetchall()
+        session_dict = dict(session)
         return {
-            "session": dict(session),
+            "session": session_dict,
             "turns": [dict(row) for row in turns],
             "tools": [dict(row) for row in tools],
             "commands": [dict(row) for row in commands],
             "context_blocks": [dict(row) for row in contexts],
             "file_accesses": [dict(row) for row in files],
             "relationships": [dict(row) for row in relationships],
+            "usage_rollup": self.forensic_usage_rollup(session_id),
+        }
+
+    def forensic_usage_rollup(self, session_id: str) -> dict[str, Any]:
+        eligible = {"sidechain_parent_message", "child_session"}
+        with self._connect() as connection:
+            session_rows = {
+                row["session_id"]: dict(row)
+                for row in connection.execute("SELECT * FROM forensic_sessions").fetchall()
+            }
+            edge_rows = [
+                dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT * FROM forensic_relationships
+                    WHERE parent_session_id IS NOT NULL AND child_session_id IS NOT NULL
+                    ORDER BY relationship_id
+                    """
+                ).fetchall()
+            ]
+        direct = _usage_values(session_rows.get(session_id, {}))
+        graph: dict[str, list[dict[str, Any]]] = {}
+        skipped_edges = []
+        relationship_types: set[str] = set()
+        seen_edges: set[tuple[str, str, str]] = set()
+        for edge in edge_rows:
+            etype = str(edge.get("relationship_type") or "")
+            parent = str(edge.get("parent_session_id") or "")
+            child = str(edge.get("child_session_id") or "")
+            key = (parent, child, etype)
+            if key in seen_edges:
+                skipped_edges.append({"reason": "duplicate_edge", **edge})
+                continue
+            seen_edges.add(key)
+            if etype not in eligible:
+                skipped_edges.append({"reason": "ineligible_relationship_type", **edge})
+                continue
+            if not parent or not child or parent == child:
+                skipped_edges.append({"reason": "self_or_missing_endpoint", **edge})
+                continue
+            graph.setdefault(parent, []).append(edge)
+            relationship_types.add(etype)
+
+        descendants: set[str] = set()
+        cycles = []
+        stack: list[tuple[str, tuple[str, ...]]] = [(session_id, (session_id,))]
+        while stack:
+            current, path = stack.pop()
+            for edge in graph.get(current, []):
+                child = str(edge["child_session_id"])
+                if child in path:
+                    cycles.append({"path": [*path, child], "relationship_id": edge["relationship_id"]})
+                    continue
+                if child in descendants:
+                    continue
+                descendants.add(child)
+                if child in session_rows:
+                    stack.append((child, (*path, child)))
+                else:
+                    skipped_edges.append({"reason": "orphan_child", **edge})
+        descendant = _zero_usage()
+        for descendant_id in sorted(descendants):
+            descendant = _add_usage(descendant, _usage_values(session_rows.get(descendant_id, {})))
+        return {
+            "direct_usage": direct,
+            "descendant_usage": descendant,
+            "inclusive_usage": _add_usage(direct, descendant),
+            "descendant_session_ids": sorted(descendants),
+            "relationship_types_used": sorted(relationship_types),
+            "cycles": cycles,
+            "skipped_edges": skipped_edges,
+            "quality": "derived",
+            "available": bool(graph.get(session_id) or descendants),
+            "unavailable_reason": None
+            if graph.get(session_id) or descendants
+            else "Unavailable from source relationship semantics",
         }
 
     def forensic_turn_detail(self, turn_id: str, *, limit: int = 200) -> dict[str, Any] | None:
@@ -948,6 +1079,27 @@ def _forensic_session_filter_sql(filters: dict[str, Any]) -> tuple[str, list[Any
             "OR r.child_session_id = forensic_sessions.session_id)"
         )
     return " ".join(clauses), params
+
+
+def _zero_usage() -> dict[str, int]:
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cached_tokens": 0,
+        "reasoning_tokens": 0,
+    }
+
+
+def _usage_values(row: dict[str, Any]) -> dict[str, int]:
+    return {
+        key: int(row.get(key) or 0)
+        for key in _zero_usage()
+    }
+
+
+def _add_usage(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
+    return {key: int(left.get(key) or 0) + int(right.get(key) or 0) for key in _zero_usage()}
 
 
 def _session_tuple(row: dict[str, Any]) -> tuple[Any, ...]:

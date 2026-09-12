@@ -4,12 +4,17 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 
 function tokenText(value: number | null | undefined) {
-  return value == null ? 'Unavailable from source telemetry' : value.toLocaleString()
+  return value == null ? 'Unavailable' : value.toLocaleString()
 }
 
 function textValue(value: unknown) {
-  if (value == null || value === '') return 'Unavailable from source telemetry'
+  if (value == null || value === '') return 'Unavailable'
   return String(value)
+}
+
+function qualityText(value: unknown) {
+  const raw = String(value ?? 'unknown')
+  return raw.charAt(0).toUpperCase() + raw.slice(1)
 }
 
 function preview(value: unknown) {
@@ -24,6 +29,7 @@ export function ForensicsPanel() {
   const [offset, setOffset] = useState(0)
   const [agentFilter, setAgentFilter] = useState('')
   const [qualityFilter, setQualityFilter] = useState('')
+  const [rawExpanded, setRawExpanded] = useState(false)
   const overview = useQuery({ queryKey: ['forensics-overview'], queryFn: api.forensicOverview })
   const sessions = useQuery({
     queryKey: ['forensics-sessions', offset, agentFilter, qualityFilter],
@@ -109,13 +115,13 @@ export function ForensicsPanel() {
           {(data?.expensive_turns ?? []).slice(0, 8).map((item) => (
             <button key={item.turn_id} className="block w-full border-t border-slate-100 pt-3 text-left text-sm dark:border-slate-800" onClick={() => setTurnId(item.turn_id)}>
               <div className="flex justify-between gap-3">
-                <span className="font-medium">{item.model ?? item.event_type ?? 'Unknown model'}</span>
+                  <span className="font-medium">{item.model ?? item.event_type ?? 'Unknown model'}</span>
                 <span>{tokenText(item.total_tokens)}</span>
               </div>
               <p className="mt-1 line-clamp-2 text-slate-600 dark:text-slate-300">
                 {item.user_preview || item.assistant_preview || 'No local preview exposed'}
               </p>
-              <div className="mt-1 text-xs text-slate-500">quality: {item.token_quality}</div>
+              <div className="mt-1 text-xs text-slate-500">Quality: {qualityText(item.token_quality)}</div>
             </button>
           ))}
           {(data?.expensive_turns ?? []).length === 0 && <p className="text-sm text-slate-500">No turns ingested yet.</p>}
@@ -176,11 +182,11 @@ export function ForensicsPanel() {
                       {row.agent}
                     </button>
                   </td>
-                  <td className="py-2 pr-4">{row.model ?? 'Unavailable from source telemetry'}</td>
-                  <td className="max-w-sm truncate py-2 pr-4">{row.project_path ?? 'Unavailable from source telemetry'}</td>
+                  <td className="py-2 pr-4">{row.model ?? 'Unavailable'}</td>
+                  <td className="max-w-sm truncate py-2 pr-4">{row.project_path ?? 'Unavailable'}</td>
                   <td className="py-2 pr-4">{row.raw_event_count}</td>
                   <td className="py-2 pr-4">{tokenText(row.total_tokens)}</td>
-                  <td className="py-2 pr-4">{row.token_quality}</td>
+                  <td className="py-2 pr-4">{qualityText(row.token_quality)}</td>
                 </tr>
               ))}
             </tbody>
@@ -207,7 +213,7 @@ export function ForensicsPanel() {
               <button key={row.turn_id} className="rounded-md border border-slate-200 p-3 text-left text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900" onClick={() => setTurnId(row.turn_id)}>
                 <div className="flex flex-wrap justify-between gap-2">
                   <span>Turn {row.turn_index} · {row.event_type ?? 'event'} · {row.model ?? 'unknown model'}</span>
-                  <span>{tokenText(row.total_tokens)} · {row.token_quality}</span>
+                  <span>{tokenText(row.total_tokens)} · {qualityText(row.token_quality)}</span>
                 </div>
                 <p className="mt-1 line-clamp-2 text-slate-600 dark:text-slate-300">{row.user_preview || row.assistant_preview || 'No local preview exposed'}</p>
               </button>
@@ -218,7 +224,7 @@ export function ForensicsPanel() {
               <button key={index} className="block w-full rounded-md border border-slate-200 p-3 text-left text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900" onClick={() => row.turn_id && setTurnId(String(row.turn_id))}>
                 <div className="font-medium">{textValue(row.path)}</div>
                 <div className="text-xs text-slate-500">
-                  {textValue(row.operation)} · {textValue(row.actual_range)} · chars {textValue(row.characters)} · tokens {tokenText(row.estimated_tokens as number | null)} · quality {textValue(row.token_quality)}
+                  {textValue(row.operation)} · {textValue(row.actual_range)} · chars {textValue(row.characters)} · tokens {tokenText(row.estimated_tokens as number | null)} · Quality {qualityText(row.token_quality)}
                 </div>
                 <div className="text-xs text-slate-500">
                   repeated path {textValue(row.repeated_path)} · repeated content {textValue(row.repeated_content)}
@@ -250,7 +256,7 @@ export function ForensicsPanel() {
           <EvidenceList title="Input / Output">
             {turnDetail.messages.map((row, index) => (
               <pre key={`${textValue(row.message_id)}-${index}`} className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">
-                {textValue(row.role)} · {textValue(row.token_quality)} · {tokenText(row.estimated_tokens as number | null)}
+                {textValue(row.role)} · {qualityText(row.token_quality)} · {tokenText(row.estimated_tokens as number | null)}
                 {'\n\n'}
                 {preview(row.preview)}
               </pre>
@@ -264,11 +270,18 @@ export function ForensicsPanel() {
             ))}
           </EvidenceList>
           <EvidenceList title="Raw / Provenance">
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">
-              {preview(turnDetail.turn.provenance_json)}
-              {'\n\n'}
-              {preview(JSON.stringify(turnDetail.raw_events, null, 2))}
-            </pre>
+            <button className="rounded-md border border-slate-300 px-3 py-1 text-sm dark:border-slate-700" onClick={() => setRawExpanded((value) => !value)}>
+              {rawExpanded ? 'Collapse raw provenance' : 'Expand raw provenance'}
+            </button>
+            {rawExpanded ? (
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">
+                {preview(turnDetail.turn.provenance_json)}
+                {'\n\n'}
+                {preview(JSON.stringify(turnDetail.raw_events, null, 2))}
+              </pre>
+            ) : (
+              <p className="text-sm text-slate-500">Raw and provenance data hidden until requested.</p>
+            )}
           </EvidenceList>
         </div>
       )}
@@ -314,7 +327,7 @@ function Hotspot({ title, rows, nameKey }: { title: string; rows: Array<Record<s
             </div>
           </div>
         ))}
-        {rows.length === 0 && <p className="text-slate-500">Unavailable from source telemetry</p>}
+        {rows.length === 0 && <p className="text-slate-500">Unavailable</p>}
       </div>
     </div>
   )

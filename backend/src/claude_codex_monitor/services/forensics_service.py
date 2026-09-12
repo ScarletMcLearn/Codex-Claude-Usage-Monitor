@@ -68,6 +68,9 @@ class ForensicsService:
     def hotspots(self) -> dict[str, list[dict[str, Any]]]:
         return self._store.forensic_hotspots()
 
+    def source_diagnostics(self) -> list[dict[str, Any]]:
+        return self._store.forensic_source_diagnostics()
+
     def export(
         self,
         *,
@@ -99,20 +102,25 @@ class ForensicsService:
                 "created_at_utc": datetime.now(UTC).isoformat(),
                 "export_type": export_type,
                 "filters": filters or {},
+                "scope": {"session_ids": sorted(scoped_session_ids) if scoped_session_ids else None},
                 "zero_ai_tokens": True,
                 "warning": (
                     "Full exports can contain sensitive local prompts, responses, code, "
                     "and command output."
                 ),
+                "record_counts": {},
             }
-            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
             zf.writestr("summary.json", json.dumps(self.overview(), indent=2))
             for table in tables:
                 table_rows = self._store.list_forensic_table(table)
                 if scoped_session_ids is not None and table != "agents":
                     table_rows = _scope_rows(table_rows, scoped_session_ids)
+                    if table == "relationships":
+                        table_rows = _mark_external_relationship_refs(table_rows, scoped_session_ids)
+                manifest["record_counts"][table.replace("-", "_")] = len(table_rows)
                 lines = "\n".join(json.dumps(row, ensure_ascii=False) for row in table_rows)
                 zf.writestr(f"{table}.jsonl", lines + ("\n" if lines else ""))
+            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
             zf.writestr("report.md", _report_markdown(self.overview()))
         return {
             "path": str(out),
@@ -137,6 +145,7 @@ class ForensicsService:
                 stat = path.stat()
             except OSError:
                 continue
+            identity = _file_identity(stat)
             sources.append(
                 {
                     "source_id": _stable_id(agent, str(path)),
@@ -146,14 +155,31 @@ class ForensicsService:
                     "parser_version": PARSER_VERSION,
                     "file_size": stat.st_size,
                     "file_mtime_utc": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+                    "source_identity": identity,
+                    "head_fingerprint": _head_fingerprint(path),
                 }
             )
         return sources
 
     def _ingest_jsonl_source(self, source: dict[str, Any]) -> dict[str, int]:
-        self._store.upsert_forensic_source(source)
         current = self._store.get_forensic_source(source["source_id"]) or {}
         checkpoint = int(current.get("checkpoint_offset") or 0)
+        reset_reason: str | None = None
+        truncation_detected = rotation_detected = replacement_detected = False
+        if current.get("parser_version") and current.get("parser_version") != source["parser_version"]:
+            reset_reason = "parser_version_changed"
+        elif (
+            current.get("head_fingerprint")
+            and current.get("head_fingerprint") != source.get("head_fingerprint")
+        ):
+            reset_reason = "replacement_or_rewrite_detected"
+            replacement_detected = True
+        elif source.get("file_size") is not None and int(source["file_size"]) < checkpoint:
+            reset_reason = "truncation_detected"
+            truncation_detected = True
+        if reset_reason:
+            checkpoint = 0
+        self._store.upsert_forensic_source(source)
         path = Path(source["source_path"])
         try:
             size = path.stat().st_size
@@ -165,6 +191,8 @@ class ForensicsService:
             return {"events_processed": 0, "events_skipped": 0, "malformed_events": 0}
         if size < checkpoint:
             checkpoint = 0
+            reset_reason = reset_reason or "truncation_detected"
+            truncation_detected = True
 
         sessions: dict[str, dict[str, Any]] = {}
         turns: list[dict[str, Any]] = []
@@ -175,27 +203,34 @@ class ForensicsService:
         file_accesses: list[dict[str, Any]] = []
         relationships: list[dict[str, Any]] = []
         raw_events: list[dict[str, Any]] = []
-        processed = skipped = malformed = 0
+        processed = skipped = malformed = duplicate = 0
         offset = checkpoint
+        last_event_time_utc = None
         with path.open("rb") as fh:
             fh.seek(checkpoint)
             for line in fh:
                 line_offset = offset
-                offset += len(line)
+                next_offset = offset + len(line)
                 stripped = line.strip()
                 if not stripped:
                     skipped += 1
+                    offset = next_offset
                     continue
                 try:
                     raw = json.loads(stripped)
                 except json.JSONDecodeError:
+                    if not line.endswith(b"\n") and next_offset == size:
+                        break
                     malformed += 1
+                    offset = next_offset
                     continue
                 if not isinstance(raw, dict):
                     skipped += 1
+                    offset = next_offset
                     continue
                 event = _normalize_event(source, raw, line_offset, processed)
                 raw_events.append(event["raw_event"])
+                last_event_time_utc = event["raw_event"].get("timestamp_utc") or last_event_time_utc
                 sessions[event["session"]["session_id"]] = _merge_session(
                     sessions.get(event["session"]["session_id"]), event["session"]
                 )
@@ -208,6 +243,9 @@ class ForensicsService:
                 file_accesses.extend(event.get("file_accesses", []))
                 relationships.extend(event.get("relationships", []))
                 processed += 1
+                offset = next_offset
+        existing_raw = {row["raw_event_id"] for row in self._store.list_forensic_table("raw-events")}
+        duplicate = sum(1 for event in raw_events if event["raw_event_id"] in existing_raw)
         self._store.insert_forensic_rows(
             sessions=list(sessions.values()), turns=turns, messages=messages,
             tools=tools, commands=commands, contexts=contexts, raw_events=raw_events,
@@ -215,7 +253,11 @@ class ForensicsService:
         )
         self._store.update_forensic_source_checkpoint(
             source["source_id"], checkpoint_offset=offset, events_processed=processed,
-            events_skipped=skipped, malformed_events=malformed,
+            events_skipped=skipped, malformed_events=malformed, duplicate_events=duplicate,
+            reset_reason=reset_reason, last_event_time_utc=last_event_time_utc,
+            rotation_detected=rotation_detected,
+            truncation_detected=truncation_detected,
+            replacement_detected=replacement_detected,
         )
         return {
             "events_processed": processed,
@@ -1279,3 +1321,34 @@ def _scope_rows(rows: list[dict[str, Any]], session_ids: set[str]) -> list[dict[
         if any(value in session_ids for value in session_values if value is not None):
             scoped.append(row)
     return scoped
+
+
+def _mark_external_relationship_refs(
+    rows: list[dict[str, Any]], session_ids: set[str]
+) -> list[dict[str, Any]]:
+    marked = []
+    for row in rows:
+        copied = dict(row)
+        parent = copied.get("parent_session_id")
+        child = copied.get("child_session_id")
+        copied["parent_scope"] = (
+            "included" if parent in session_ids else "external_not_included"
+        )
+        copied["child_scope"] = "included" if child in session_ids else "external_not_included"
+        marked.append(copied)
+    return marked
+
+
+def _file_identity(stat: os.stat_result) -> str:
+    device = getattr(stat, "st_dev", None)
+    inode = getattr(stat, "st_ino", None)
+    ctime_ns = getattr(stat, "st_ctime_ns", int(stat.st_ctime * 1_000_000_000))
+    return f"dev={device};ino={inode};ctime_ns={ctime_ns}"
+
+
+def _head_fingerprint(path: Path, *, max_bytes: int = 4096) -> str | None:
+    try:
+        with path.open("rb") as fh:
+            return hashlib.sha256(fh.read(max_bytes)).hexdigest()
+    except OSError:
+        return None

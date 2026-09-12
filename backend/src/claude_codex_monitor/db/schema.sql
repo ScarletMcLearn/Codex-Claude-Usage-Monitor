@@ -88,10 +88,19 @@ CREATE TABLE IF NOT EXISTS forensic_sources (
     last_ingested_utc  TEXT,
     file_size          INTEGER,
     file_mtime_utc     TEXT,
+    source_identity    TEXT,
+    head_fingerprint   TEXT,
     checkpoint_offset  INTEGER NOT NULL DEFAULT 0,
     events_processed   INTEGER NOT NULL DEFAULT 0,
     events_skipped     INTEGER NOT NULL DEFAULT 0,
     malformed_events   INTEGER NOT NULL DEFAULT 0,
+    duplicate_events   INTEGER NOT NULL DEFAULT 0,
+    checkpoint_reset_count INTEGER NOT NULL DEFAULT 0,
+    checkpoint_reset_reason TEXT,
+    last_event_time_utc TEXT,
+    rotation_detected  INTEGER NOT NULL DEFAULT 0,
+    truncation_detected INTEGER NOT NULL DEFAULT 0,
+    replacement_detected INTEGER NOT NULL DEFAULT 0,
     last_error         TEXT
 );
 

@@ -84,6 +84,11 @@ def forensic_hotspots(service: ForensicsService = Depends(get_forensics_service)
     return service.hotspots()
 
 
+@router.get("/forensics/sources/diagnostics")
+def forensic_source_diagnostics(service: ForensicsService = Depends(get_forensics_service)):
+    return service.source_diagnostics()
+
+
 @router.post("/forensics/export")
 def forensic_export(
     export_type: str = Query("summary", pattern="^(summary|full)$"),
