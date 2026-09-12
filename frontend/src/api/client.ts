@@ -8,6 +8,7 @@ import type {
   UsageReport,
   ForensicOverview,
   ForensicHotspots,
+  ForensicSourceDiagnostics,
   PaginatedForensicSessions,
   ForensicSessionDetail,
   ForensicTurnDetail,
@@ -116,6 +117,8 @@ export const api = {
   forensicTurn: (turnId: string) =>
     request<ForensicTurnDetail>(`/forensics/turns/${encodeURIComponent(turnId)}`),
   forensicHotspots: () => request<ForensicHotspots>('/forensics/hotspots'),
+  forensicSourceDiagnostics: () =>
+    request<ForensicSourceDiagnostics[]>('/forensics/sources/diagnostics'),
   forensicExport: (exportType: 'summary' | 'full', warningAck = false) =>
     request<{ path: string; export_type: string; created_at_utc: string }>(
       `/forensics/export?export_type=${exportType}&warning_ack=${warningAck}`,

@@ -121,6 +121,68 @@ vi.mock('../../api/client', () => ({
       context: [],
       files: [{ path: 'README.md', accesses: 2, characters: 120, estimated_tokens: 30 }],
     }),
+    forensicSourceDiagnostics: vi.fn().mockResolvedValue([
+      {
+        source_id: 'healthy-src',
+        source: 'codex',
+        source_type: 'jsonl',
+        source_identity: 'codex-session-a.jsonl',
+        file_size: 2048,
+        stored_checkpoint: 2048,
+        current_offset: 2048,
+        last_event_time_utc: '2026-09-12T00:00:01Z',
+        parser_version: 'codex-jsonl-v1',
+        events_processed: 2,
+        malformed_events: 0,
+        duplicate_events: 0,
+        checkpoint_reset_count: 0,
+        reset_reason: null,
+        rotation_detected: 0,
+        truncation_detected: 0,
+        replacement_detected: 0,
+        last_error: null,
+      },
+      {
+        source_id: 'idle-src',
+        source: 'claude',
+        source_type: 'jsonl',
+        source_identity: null,
+        file_size: null,
+        stored_checkpoint: null,
+        current_offset: null,
+        last_event_time_utc: null,
+        parser_version: 'claude-jsonl-v1',
+        events_processed: 0,
+        malformed_events: 0,
+        duplicate_events: 0,
+        checkpoint_reset_count: 0,
+        reset_reason: null,
+        rotation_detected: 0,
+        truncation_detected: 0,
+        replacement_detected: 0,
+        last_error: null,
+      },
+      {
+        source_id: 'warning-src',
+        source: 'codex',
+        source_type: 'jsonl',
+        source_identity: 'sanitized-warning-source',
+        file_size: 4096,
+        stored_checkpoint: 128,
+        current_offset: 128,
+        last_event_time_utc: '2026-09-12T00:00:02Z',
+        parser_version: 'codex-jsonl-v2',
+        events_processed: 4,
+        malformed_events: 3,
+        duplicate_events: 2,
+        checkpoint_reset_count: 1,
+        reset_reason: 'file replacement detected',
+        rotation_detected: 0,
+        truncation_detected: 1,
+        replacement_detected: 1,
+        last_error: null,
+      },
+    ]),
     forensicRefresh: vi.fn(),
     forensicExport: vi.fn().mockResolvedValue({ path: '/tmp/export.zip' }),
   },
@@ -163,6 +225,33 @@ describe('ForensicsPanel', () => {
     expect(screen.getByDisplayValue('All agents')).toBeInTheDocument()
     expect(screen.getByDisplayValue('All qualities')).toBeInTheDocument()
     expect(screen.getByText('Offset 0')).toBeInTheDocument()
+  })
+
+  it('renders deterministic source diagnostics without raw conversation text', async () => {
+    renderPanel()
+
+    expect(await screen.findByText('Collector Diagnostics')).toBeInTheDocument()
+    expect(screen.getByText('Collection mode: Passive local telemetry')).toBeInTheDocument()
+    expect(screen.getByText('Model-generation requests by forensic monitor: 0')).toBeInTheDocument()
+    expect(await screen.findByText('codex-jsonl-v1')).toBeInTheDocument()
+    expect(await screen.findByText('claude-jsonl-v1')).toBeInTheDocument()
+    expect(await screen.findByText('codex-jsonl-v2')).toBeInTheDocument()
+    expect(screen.getByText('Healthy')).toBeInTheDocument()
+    expect(screen.getByText('Idle')).toBeInTheDocument()
+    expect(screen.getByText('Warning')).toBeInTheDocument()
+    expect(screen.queryByText('Error')).not.toBeInTheDocument()
+    expect(screen.getByText('Source valid and unchanged; no new local telemetry ingested.')).toBeInTheDocument()
+    expect(screen.getAllByText('3').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('2').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1').length).toBeGreaterThan(0)
+    expect(screen.getByText('file replacement detected')).toBeInTheDocument()
+    expect(screen.getByText('Truncation detected: Yes')).toBeInTheDocument()
+    expect(screen.getByText('Replacement detected: Yes')).toBeInTheDocument()
+    expect(screen.getByText('Source identity: Unavailable')).toBeInTheDocument()
+    expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0)
+    expect(screen.queryByText('user private prompt')).not.toBeInTheDocument()
+    expect(screen.queryByText('assistant private response')).not.toBeInTheDocument()
+    expect(screen.queryByText('raw command output')).not.toBeInTheDocument()
   })
 
   it('gates full export with warning acknowledgement', async () => {

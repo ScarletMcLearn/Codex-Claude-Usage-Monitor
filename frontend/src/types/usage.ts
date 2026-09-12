@@ -225,6 +225,27 @@ export interface ForensicHotspots {
   files: Array<Record<string, unknown>>
 }
 
+export interface ForensicSourceDiagnostics {
+  source_id: string
+  source: string
+  source_type: string
+  source_identity: string | null
+  file_size: number | null
+  stored_checkpoint: number | null
+  current_offset: number | null
+  last_event_time_utc: string | null
+  parser_version: string
+  events_processed: number
+  malformed_events: number
+  duplicate_events: number
+  checkpoint_reset_count: number
+  reset_reason: string | null
+  rotation_detected: number
+  truncation_detected: number
+  replacement_detected: number
+  last_error: string | null
+}
+
 export interface PaginatedForensicSessions {
   items: ForensicSession[]
   limit: number

@@ -3,48 +3,45 @@
 # Codex Agent Handover
 
 ## Objective
-Continue existing Claude & Codex Usage Monitor forensic work without restart. Implement focused gaps: relationship rollups/cycle safety, collector checkpoint resilience, export ZIP verification, pagination tests, safe structural telemetry validation, frontend warning/raw/unknown-vs-zero tests, docs, zero-token proof.
+Continue existing Claude & Codex Usage Monitor forensic work without restart. Current pass focus: source diagnostics UI, deterministic health, cross-layer validation, support matrix, diagnostics UI/API tests, real telemetry validation, zero-token regression, docs.
 
 ## Current status
-Work just started for this pass. Initial repo state was verified clean by `git status --short --untracked-files=all` and `git diff --stat` (both empty output). Prior handoff read and treated authoritative.
+Work in progress. Starting state for this pass: only `.agent/HANDOFF.md` dirty from prior handoff; `git diff --stat` showed `.agent/HANDOFF.md | 68 ++++++++++++++++++++++++++++++++++++-------------------`.
 
 ## Completed work
 - Loaded `caveman` skill per repo instructions.
-- Read pasted request, prior `.agent/HANDOFF.md`, core forensic service/store/schema.
-- Marked handoff active for current pass.
+- Read pasted request and prior handoff.
+- Inspected existing forensics API route, frontend panel/tests, frontend client/types, docs, and source diagnostics store query.
 
 ## Files changed
-- `.agent/HANDOFF.md`: active handoff for current pass.
+- `.agent/HANDOFF.md`: marked ACTIVE for this pass.
 
 ## Commands and tests run
-- `git status --short --untracked-files=all`: exit 0, empty output.
-- `git diff --stat`: exit 0, empty output.
-- Read `backend/src/claude_codex_monitor/services/forensics_service.py`, `backend/src/claude_codex_monitor/db/store.py`, `backend/src/claude_codex_monitor/db/schema.sql`.
+- `git status --short --untracked-files=all`: exit 0, output ` M .agent/HANDOFF.md`.
+- `git diff --stat`: exit 0, output only `.agent/HANDOFF.md` diff.
 
 ## Current failures or blockers
 None yet.
 
 ## Decisions and assumptions
 - Preserve zero-token rule: no model APIs, no agent prompts, no provider commands.
-- Use local deterministic file reads, SQLite, hashing, arithmetic, ZIP inspection, unit/UI tests only.
-- Keep relationship semantics conservative: only sidechain-like evidenced ancestry can be rollup-eligible; parent-message remains provenance-only.
+- Ordinary diagnostics must not render raw prompt/assistant/tool/command content.
+- Existing endpoint `/api/forensics/sources/diagnostics` exists; frontend lacks client wiring/UI.
 
 ## Exact next steps
-1. Inspect precise store/service/test/UI sections needed.
-2. Add checkpoint identity/reset diagnostics with Windows-compatible file metadata/fingerprint.
-3. Add relationship rollup helper/store exposure with cycle-safe traversal and conservative eligible relationship types.
-4. Add backend tests for rollups, checkpoint matrix, export ZIP content/counts, pagination.
-5. Add safe structural revalidation script/test if clean.
-6. Add frontend tests for export warning, raw/provenance expansion, unknown-vs-zero, estimate-vs-reported.
-7. Update docs and run targeted verification.
+1. Add frontend source diagnostics types/client call and UI section in `frontend/src/components/forensics/ForensicsPanel.tsx`.
+2. Add focused source diagnostics UI tests.
+3. Add/strengthen backend API diagnostics security assertions.
+4. Update docs support matrix and monitoring flow.
+5. Run bounded structural validation and zero-token regression/tests.
 
 ## Risks and warnings
 - Raw telemetry can contain prompts/output/code. Do not print raw JSONL contents.
-- Full export is sensitive and must remain warning-gated.
-- Do not reinterpret Claude `parentUuid` as execution ancestry unless sidechain evidence qualifies.
+- Full export remains sensitive and warning-gated.
+- Do not broaden scope into AI-powered analysis.
 
 ## Repository state
-Start: clean (`git status --short --untracked-files=all` empty; `git diff --stat` empty).
+Start: `.agent/HANDOFF.md` dirty only.
 
 ## Last updated
-2026-09-13T00:00:00+06:00
+2026-09-13T01:08:00+06:00

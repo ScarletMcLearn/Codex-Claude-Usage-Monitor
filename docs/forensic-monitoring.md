@@ -119,6 +119,8 @@ The dashboard includes a Token Forensics section:
 
 - evidence refresh;
 - zero-token counters;
+- source diagnostics with deterministic health, parser/checkpoint state, reset
+  counts/reasons, truncation/replacement flags, and passive collection mode;
 - source/entity counts;
 - expensive turns;
 - repeated context;
@@ -137,6 +139,21 @@ The dashboard includes a Token Forensics section:
 Large content is not rendered in full by default. API queries are bounded and the
 UI shows previews.
 
+Source diagnostics are operational health views. They show sanitized source
+identity, source type, parser version, file size, checkpoint offset, event
+counts, malformed/duplicate counts, reset/truncation/replacement flags, and
+last event time. They do not show raw prompts, assistant responses, source-code
+contents, command output, tool output, or credentials.
+
+Deterministic source health:
+
+- `Healthy`: source is accessible, has processed events, and has no current
+  parser error, malformed/reset, truncation, replacement, or rotation evidence.
+- `Idle`: source is valid and unchanged; no new local telemetry was ingested.
+- `Warning`: malformed events, duplicate-heavy parser skips, checkpoint reset,
+  truncation, replacement, or rotation evidence exists.
+- `Error`: source has a current collector/parser error.
+
 ## Exports
 
 Summary exports include manifest, overview, agents, sessions, and turns.
@@ -153,34 +170,48 @@ relationships whose other endpoint is outside the export are marked
 
 ## Support Matrix
 
-| Capability | Codex | Claude |
-| --- | --- | --- |
-| session ID | Supported | Supported |
-| turn ID | Supported | Supported |
-| model | Partially supported | Supported when `message.model` exists |
-| project | Supported when `cwd` exists | Supported when `cwd` exists |
-| branch | Unavailable from current parser | Supported when `gitBranch` exists |
-| raw user text | Supported when event exposes text | Supported when `message.content` exposes text |
-| raw assistant text | Supported when event exposes text | Supported when `message.content` exposes text |
-| reported input tokens | Partially supported | Supported from assistant `message.usage` |
-| reported output tokens | Partially supported | Supported from assistant `message.usage` |
-| cache tokens | Partially supported | Supported when usage exposes cache fields |
-| reasoning tokens | Partially supported | Partially supported when usage exposes details |
-| current context | Not yet implemented | Not yet implemented |
-| cumulative tokens | Framework implemented; source support partial | Framework implemented; source support unavailable in observed data |
-| tool calls | Supported | Supported |
-| tool output | Supported when exposed | Supported when exposed |
-| commands | Supported when command-shaped payloads exist | Supported when command-shaped payloads exist |
-| file access | Partially supported from explicit tool args | Partially supported from explicit tool args |
-| parent relationships | Unavailable from source | Supported as parent-message evidence |
-| child-agent relationships | Unavailable from source | Partially supported only when sidechain evidence exists |
-| retry data | Not yet implemented | Not yet implemented |
-| fallback data | Not yet implemented | Not yet implemented |
-| compaction | Raw event retained | Raw event retained |
-| raw event retention | Supported | Supported |
-| provenance | Supported | Supported |
-| UI support | Supported | Supported |
-| export support | Supported | Supported |
+Allowed status values are `Supported`, `Partially supported`,
+`Unavailable from source telemetry`, and `Not implemented`.
+
+| Capability | Codex | Claude | Source/Evidence | UI | Export |
+| --- | --- | --- | --- | --- | --- |
+| session ID | Supported | Supported | JSONL session fields/path-derived IDs | Supported | Supported |
+| turn ID | Supported | Supported | Deterministic event/message IDs | Supported | Supported |
+| model | Partially supported | Supported | Codex when event exposes model; Claude `message.model` | Supported | Supported |
+| provider | Partially supported | Partially supported | Source metadata when exposed; otherwise agent-derived | Supported | Supported |
+| project/repository | Partially supported | Partially supported | `cwd`/project path when source exposes it | Supported | Supported |
+| branch/worktree | Unavailable from source telemetry | Partially supported | Claude `gitBranch`; Codex observed source lacks branch | Supported | Supported |
+| raw user input | Supported | Supported | Message text when local JSONL exposes content | Supported | Supported |
+| raw assistant output | Supported | Supported | Message text when local JSONL exposes content | Supported | Supported |
+| reported input tokens | Partially supported | Supported | Usage fields when present | Supported | Supported |
+| reported output tokens | Partially supported | Supported | Usage fields when present | Supported | Supported |
+| total tokens | Partially supported | Supported | Reported or deterministic sum of reported fields | Supported | Supported |
+| cached tokens | Partially supported | Partially supported | Usage cache fields when present | Supported | Supported |
+| reasoning tokens | Partially supported | Partially supported | Usage/reasoning fields when present | Supported | Supported |
+| context usage | Partially supported | Partially supported | Deterministic estimates from exposed context/file blocks | Supported | Supported |
+| cumulative usage | Partially supported | Partially supported | Cumulative-to-delta framework where source exposes cumulative fields | Supported | Supported |
+| token provenance | Supported | Supported | Per-row quality/provenance JSON | Supported | Supported |
+| tools | Supported | Supported | Codex tool events; Claude `tool_use` blocks | Supported | Supported |
+| tool output | Supported | Supported | Tool output when local telemetry exposes it | Supported | Supported |
+| commands | Partially supported | Partially supported | Command-shaped tool payloads/output | Supported | Supported |
+| command output | Partially supported | Partially supported | stdout/stderr when exposed | Supported | Supported |
+| file access | Partially supported | Partially supported | Explicit file/tool access evidence only | Supported | Supported |
+| file repetition | Supported | Supported | Deterministic path/content hashes | Supported | Supported |
+| repeated context | Supported | Supported | Deterministic content hashes | Supported | Supported |
+| relationships | Partially supported | Partially supported | Parent/child evidence when telemetry exposes links | Supported | Supported |
+| sidechains | Partially supported | Partially supported | Eligible sidechain relationship evidence only | Supported | Supported |
+| true child sessions | Unavailable from source telemetry | Partially supported | Only when source evidence proves child-session semantics | Supported | Supported |
+| direct usage | Supported | Supported | Session-local usage rows | Supported | Supported |
+| descendant usage | Partially supported | Partially supported | Derived over eligible cycle-safe relationship edges | Supported | Supported |
+| inclusive usage | Partially supported | Partially supported | Direct plus descendant usage when relationships qualify | Supported | Supported |
+| retries | Not implemented | Not implemented | No deterministic retry model yet | Not implemented | Not implemented |
+| fallbacks | Not implemented | Not implemented | No deterministic fallback model yet | Not implemented | Not implemented |
+| compaction | Partially supported | Partially supported | Raw compaction events retained; semantic accounting partial | Supported | Supported |
+| raw event retention | Supported | Supported | Raw JSONL event copy | Supported | Supported |
+| source diagnostics | Supported | Supported | `forensic_sources` checkpoint/parser/reset fields | Supported | Supported |
+| hotspots | Supported | Supported | Tool/command/context/file aggregate queries | Supported | Supported |
+| summary export | Supported | Supported | Safe ZIP summary manifest/data | Supported | Supported |
+| full forensic export | Supported | Supported | Warning-gated ZIP with raw retained evidence | Supported | Supported |
 
 ## Zero-Token Guarantee
 
@@ -209,6 +240,29 @@ Subprocess audit:
 Existing quota adapters are separate from forensic ingestion. Some quota paths can
 run provider commands when enabled by existing settings; those are not used by
 `/api/forensics/refresh`.
+
+Monitoring flow:
+
+```text
+AI agent performs normal work
+        |
+agent writes its normal local telemetry
+        |
+forensic collector passively reads telemetry
+        |
+source-specific deterministic parser
+        |
+SQLite
+        |
+analytics / monitoring UI / export
+```
+
+The forensic monitor does not create model requests in order to collect
+telemetry.
+
+Agent usage consumes tokens normally. The monitor observes already-generated
+local telemetry, consumes local CPU/RAM/disk only, and adds 0 model-generation
+requests.
 
 ## Limitations
 

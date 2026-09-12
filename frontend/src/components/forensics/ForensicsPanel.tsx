@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
+import type { ForensicSourceDiagnostics } from '../../types/usage'
 
 function tokenText(value: number | null | undefined) {
   return value == null ? 'Unavailable' : value.toLocaleString()
@@ -50,6 +51,10 @@ export function ForensicsPanel() {
     enabled: turnId != null,
   })
   const hotspots = useQuery({ queryKey: ['forensics-hotspots'], queryFn: api.forensicHotspots })
+  const sourceDiagnostics = useQuery({
+    queryKey: ['forensics-source-diagnostics'],
+    queryFn: api.forensicSourceDiagnostics,
+  })
 
   async function refresh() {
     await api.forensicRefresh()
@@ -57,6 +62,7 @@ export function ForensicsPanel() {
       queryClient.invalidateQueries({ queryKey: ['forensics-overview'] }),
       queryClient.invalidateQueries({ queryKey: ['forensics-sessions'] }),
       queryClient.invalidateQueries({ queryKey: ['forensics-hotspots'] }),
+      queryClient.invalidateQueries({ queryKey: ['forensics-source-diagnostics'] }),
     ])
   }
 
@@ -109,6 +115,32 @@ export function ForensicsPanel() {
           ))}
         </div>
       )}
+
+      <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h3 className="font-semibold text-slate-800 dark:text-slate-100">Collector Diagnostics</h3>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              Collection mode: Passive local telemetry
+            </p>
+          </div>
+          <div className="text-sm text-slate-600 dark:text-slate-300">
+            Model-generation requests by forensic monitor: {data?.zero_token_counters.monitor_model_generation_requests ?? 0}
+          </div>
+        </div>
+        {sourceDiagnostics.isError ? (
+          <p className="mt-3 text-sm text-red-600">Source diagnostics unavailable.</p>
+        ) : (
+          <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
+            {(sourceDiagnostics.data ?? []).map((source) => (
+              <SourceDiagnosticCard key={source.source_id} source={source} />
+            ))}
+            {(sourceDiagnostics.data ?? []).length === 0 && (
+              <p className="text-sm text-slate-500">No passive telemetry sources discovered yet.</p>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <EvidenceList title="Expensive Turns">
@@ -312,6 +344,83 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="font-semibold">{value}</div>
     </div>
   )
+}
+
+function SourceDiagnosticCard({ source }: { source: ForensicSourceDiagnostics }) {
+  const health = sourceHealth(source)
+  return (
+    <div className="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-800">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="font-medium text-slate-900 dark:text-slate-50">
+            {textValue(source.source)} · {textValue(source.source_type)}
+          </div>
+          <div className="mt-1 break-all text-xs text-slate-500">
+            Source identity: {textValue(source.source_identity)}
+          </div>
+        </div>
+        <span className={`rounded-md border px-2 py-1 text-xs ${healthClass(health.state)}`}>
+          {health.state}
+        </span>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
+        <DiagnosticMetric label="Parser version" value={textValue(source.parser_version)} />
+        <DiagnosticMetric label="File size" value={tokenText(source.file_size)} />
+        <DiagnosticMetric label="Checkpoint offset" value={tokenText(source.stored_checkpoint)} />
+        <DiagnosticMetric label="Processed events" value={tokenText(source.events_processed)} />
+        <DiagnosticMetric label="Duplicates skipped" value={tokenText(source.duplicate_events)} />
+        <DiagnosticMetric label="Malformed events" value={tokenText(source.malformed_events)} />
+        <DiagnosticMetric label="Reset count" value={tokenText(source.checkpoint_reset_count)} />
+        <DiagnosticMetric label="Reset reason" value={textValue(source.reset_reason)} />
+        <DiagnosticMetric label="Last event timestamp" value={textValue(source.last_event_time_utc)} />
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2 text-xs">
+        <DiagnosticFlag label="Rotation detected" active={Boolean(source.rotation_detected)} />
+        <DiagnosticFlag label="Truncation detected" active={Boolean(source.truncation_detected)} />
+        <DiagnosticFlag label="Replacement detected" active={Boolean(source.replacement_detected)} />
+      </div>
+      <p className="mt-2 text-xs text-slate-500">{health.reason}</p>
+    </div>
+  )
+}
+
+function DiagnosticMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-slate-50 p-2 dark:bg-slate-900">
+      <div className="text-[11px] uppercase text-slate-500">{label}</div>
+      <div className="mt-1 break-words font-medium text-slate-800 dark:text-slate-100">{value}</div>
+    </div>
+  )
+}
+
+function DiagnosticFlag({ label, active }: { label: string; active: boolean }) {
+  return (
+    <span className={`rounded-md border px-2 py-1 ${active ? 'border-amber-300 text-amber-700 dark:text-amber-200' : 'border-slate-200 text-slate-500 dark:border-slate-800'}`}>
+      {label}: {active ? 'Yes' : 'No'}
+    </span>
+  )
+}
+
+function sourceHealth(source: ForensicSourceDiagnostics): { state: 'Healthy' | 'Idle' | 'Warning' | 'Error'; reason: string } {
+  if (source.last_error) return { state: 'Error', reason: `Collector error: ${source.last_error}` }
+  if (
+    source.malformed_events > 0 ||
+    source.checkpoint_reset_count > 0 ||
+    Boolean(source.rotation_detected) ||
+    Boolean(source.truncation_detected) ||
+    Boolean(source.replacement_detected)
+  ) {
+    return { state: 'Warning', reason: 'Source has malformed, reset, rotation, truncation, or replacement evidence.' }
+  }
+  if (source.events_processed > 0) return { state: 'Healthy', reason: 'Source accessible and events processed without current parser errors.' }
+  return { state: 'Idle', reason: 'Source valid and unchanged; no new local telemetry ingested.' }
+}
+
+function healthClass(state: ReturnType<typeof sourceHealth>['state']) {
+  if (state === 'Healthy') return 'border-emerald-300 text-emerald-700 dark:text-emerald-200'
+  if (state === 'Idle') return 'border-slate-300 text-slate-600 dark:text-slate-300'
+  if (state === 'Warning') return 'border-amber-300 text-amber-700 dark:text-amber-200'
+  return 'border-red-300 text-red-700 dark:text-red-200'
 }
 
 function Hotspot({ title, rows, nameKey }: { title: string; rows: Array<Record<string, unknown>>; nameKey: string }) {

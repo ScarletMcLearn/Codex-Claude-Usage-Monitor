@@ -182,6 +182,7 @@ async function renderApp(autoRefresh = true, summaryOverride: Partial<Summary> =
         raw_events: [],
       }),
       forensicHotspots: vi.fn().mockResolvedValue({ tools: [], commands: [], context: [], files: [] }),
+      forensicSourceDiagnostics: vi.fn().mockResolvedValue([]),
       forensicExport: vi.fn().mockResolvedValue({
         path: 'C:\\Temp\\token-forensics-summary.zip',
         export_type: 'summary',

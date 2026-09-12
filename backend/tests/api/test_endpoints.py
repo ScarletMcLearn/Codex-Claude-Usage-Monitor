@@ -183,6 +183,71 @@ def test_forensics_api_session_turn_hotspots_and_export(tmp_data_dir, tmp_path, 
     assert r.json()["path"].endswith(".zip")
 
 
+def test_forensics_source_diagnostics_safe_fields_only(tmp_data_dir):
+    from claude_codex_monitor.app import create_app
+
+    app = create_app(enable_lifespan=False)
+    app.state.store.upsert_forensic_source({
+        "source_id": "src-safe",
+        "agent": "codex",
+        "source_type": "jsonl",
+        "source_path": r"C:\Users\getra\.codex\sessions\secret.jsonl",
+        "parser_version": "codex-jsonl-v1",
+        "source_identity": "codex-session-safe",
+        "file_size": 1234,
+        "checkpoint_offset": 100,
+    })
+    app.state.store.update_forensic_source_checkpoint(
+        "src-safe",
+        checkpoint_offset=120,
+        events_processed=5,
+        events_skipped=1,
+        malformed_events=2,
+        duplicate_events=3,
+        reset_reason="truncated before checkpoint",
+        last_event_time_utc="2026-09-12T00:00:02+00:00",
+        truncation_detected=True,
+        replacement_detected=True,
+    )
+    client = TestClient(app)
+    r = client.get("/api/forensics/sources/diagnostics")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    row = body[0]
+    assert row["source"] == "codex"
+    assert row["source_type"] == "jsonl"
+    assert row["parser_version"] == "codex-jsonl-v1"
+    assert row["source_identity"] == "codex-session-safe"
+    assert row["stored_checkpoint"] == 120
+    assert row["events_processed"] == 5
+    assert row["malformed_events"] == 2
+    assert row["duplicate_events"] == 3
+    assert row["checkpoint_reset_count"] == 1
+    assert row["reset_reason"] == "truncated before checkpoint"
+    assert row["last_event_time_utc"] == "2026-09-12T00:00:02+00:00"
+    assert row["truncation_detected"] == 1
+    assert row["replacement_detected"] == 1
+    forbidden_keys = {
+        "source_path",
+        "raw_json",
+        "text",
+        "output_text",
+        "stdout_text",
+        "stderr_text",
+        "credential",
+    }
+    assert forbidden_keys.isdisjoint(row)
+    serialized = str(body)
+    assert "user private prompt" not in serialized
+    assert "assistant private response" not in serialized
+    assert "raw tool output" not in serialized
+    assert "raw command output" not in serialized
+    assert "api_key" not in serialized
+    assert r"C:\Users\getra" not in serialized
+
+
 def test_forensics_sessions_multi_page_ordering_and_filters(tmp_data_dir):
     from claude_codex_monitor.app import create_app
 
