@@ -619,7 +619,7 @@ class Store:
                 counts[name] = int(connection.execute(f"SELECT COUNT(*) AS n FROM {name}").fetchone()["n"])
             agents = connection.execute(
                 """
-                SELECT agent, COUNT(*) AS sessions, SUM(COALESCE(total_tokens, 0)) AS total_tokens
+                SELECT agent, COUNT(*) AS sessions, SUM(total_tokens) AS total_tokens
                 FROM forensic_sessions GROUP BY agent ORDER BY sessions DESC
                 """
             ).fetchall()
@@ -958,7 +958,7 @@ class Store:
         allowed = {
             "agents": (
                 "SELECT agent, provider, model, COUNT(*) AS sessions, "
-                "SUM(COALESCE(total_tokens, 0)) AS total_tokens "
+                "SUM(total_tokens) AS total_tokens "
                 "FROM forensic_sessions GROUP BY agent, provider, model"
             ),
             "sessions": "SELECT * FROM forensic_sessions",
@@ -1081,25 +1081,34 @@ def _forensic_session_filter_sql(filters: dict[str, Any]) -> tuple[str, list[Any
     return " ".join(clauses), params
 
 
-def _zero_usage() -> dict[str, int]:
+def _zero_usage() -> dict[str, int | None]:
     return {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "cached_tokens": 0,
-        "reasoning_tokens": 0,
+        "input_tokens": None,
+        "output_tokens": None,
+        "total_tokens": None,
+        "cached_tokens": None,
+        "reasoning_tokens": None,
     }
 
 
-def _usage_values(row: dict[str, Any]) -> dict[str, int]:
-    return {
-        key: int(row.get(key) or 0)
-        for key in _zero_usage()
-    }
+def _usage_values(row: dict[str, Any]) -> dict[str, int | None]:
+    values: dict[str, int | None] = {}
+    for key in _zero_usage():
+        value = row.get(key)
+        values[key] = int(value) if value is not None else None
+    return values
 
 
-def _add_usage(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
-    return {key: int(left.get(key) or 0) + int(right.get(key) or 0) for key in _zero_usage()}
+def _add_usage(left: dict[str, int | None], right: dict[str, int | None]) -> dict[str, int | None]:
+    out: dict[str, int | None] = {}
+    for key in _zero_usage():
+        left_value = left.get(key)
+        right_value = right.get(key)
+        if left_value is None and right_value is None:
+            out[key] = None
+        else:
+            out[key] = int(left_value or 0) + int(right_value or 0)
+    return out
 
 
 def _session_tuple(row: dict[str, Any]) -> tuple[Any, ...]:

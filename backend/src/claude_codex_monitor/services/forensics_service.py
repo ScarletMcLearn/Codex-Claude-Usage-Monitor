@@ -204,6 +204,8 @@ class ForensicsService:
         file_accesses: list[dict[str, Any]] = []
         relationships: list[dict[str, Any]] = []
         raw_events: list[dict[str, Any]] = []
+        existing_raw = {row["raw_event_id"] for row in self._store.list_forensic_table("raw-events")}
+        seen_raw: set[str] = set()
         processed = skipped = malformed = duplicate = 0
         offset = checkpoint
         last_event_time_utc = None
@@ -230,6 +232,13 @@ class ForensicsService:
                     offset = next_offset
                     continue
                 event = _normalize_event(source, raw, line_offset, processed)
+                raw_event_id = event["raw_event"]["raw_event_id"]
+                if raw_event_id in existing_raw or raw_event_id in seen_raw:
+                    duplicate += 1
+                    processed += 1
+                    offset = next_offset
+                    continue
+                seen_raw.add(raw_event_id)
                 raw_events.append(event["raw_event"])
                 last_event_time_utc = event["raw_event"].get("timestamp_utc") or last_event_time_utc
                 sessions[event["session"]["session_id"]] = _merge_session(
@@ -245,8 +254,6 @@ class ForensicsService:
                 relationships.extend(event.get("relationships", []))
                 processed += 1
                 offset = next_offset
-        existing_raw = {row["raw_event_id"] for row in self._store.list_forensic_table("raw-events")}
-        duplicate = sum(1 for event in raw_events if event["raw_event_id"] in existing_raw)
         self._store.insert_forensic_rows(
             sessions=list(sessions.values()), turns=turns, messages=messages,
             tools=tools, commands=commands, contexts=contexts, raw_events=raw_events,

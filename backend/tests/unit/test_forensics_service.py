@@ -375,6 +375,105 @@ def test_relationship_rollup_is_cycle_safe_and_conservative(tmp_data_dir):
     }
 
 
+def test_relationship_rollup_preserves_unknown_usage(tmp_data_dir):
+    from claude_codex_monitor.db.store import Store
+
+    store = Store(path=tmp_data_dir / "history.sqlite3")
+    store.upsert_forensic_source({
+        "source_id": "src",
+        "agent": "claude",
+        "source_type": "test",
+        "source_path": "test",
+        "parser_version": "test",
+    })
+    store.insert_forensic_rows(
+        sessions=[
+            {
+                "session_id": "root",
+                "agent": "claude",
+                "provider": "anthropic",
+                "source_id": "src",
+                "raw_event_count": 1,
+                "token_quality": "unknown",
+            },
+            {
+                "session_id": "child",
+                "agent": "claude",
+                "provider": "anthropic",
+                "source_id": "src",
+                "raw_event_count": 1,
+                "input_tokens": 7,
+                "total_tokens": 7,
+                "token_quality": "reported",
+            },
+        ],
+        turns=[],
+        messages=[],
+        tools=[],
+        commands=[],
+        contexts=[],
+        raw_events=[],
+        relationships=[
+            {
+                "relationship_id": "r1",
+                "source": "test",
+                "parent_session_id": "root",
+                "child_session_id": "child",
+                "child_agent": "claude",
+                "relationship_type": "sidechain_parent_message",
+                "evidence_json": "{}",
+                "confidence": "observed",
+            }
+        ],
+    )
+
+    overview = store.forensic_overview()
+    rollup = store.forensic_usage_rollup("root")
+    exported_agents = store.list_forensic_table("agents")
+
+    assert overview["agents"][0]["total_tokens"] == 7
+    assert exported_agents[0]["total_tokens"] == 7
+    assert rollup["direct_usage"]["total_tokens"] is None
+    assert rollup["descendant_usage"]["total_tokens"] == 7
+    assert rollup["inclusive_usage"]["total_tokens"] == 7
+    assert rollup["direct_usage"]["output_tokens"] is None
+    assert rollup["inclusive_usage"]["output_tokens"] is None
+
+
+def test_all_unknown_agent_total_remains_unavailable(tmp_data_dir):
+    from claude_codex_monitor.db.store import Store
+
+    store = Store(path=tmp_data_dir / "history.sqlite3")
+    store.upsert_forensic_source({
+        "source_id": "src",
+        "agent": "codex",
+        "source_type": "test",
+        "source_path": "test",
+        "parser_version": "test",
+    })
+    store.insert_forensic_rows(
+        sessions=[
+            {
+                "session_id": "unknown",
+                "agent": "codex",
+                "provider": "openai",
+                "source_id": "src",
+                "raw_event_count": 1,
+                "token_quality": "unknown",
+            }
+        ],
+        turns=[],
+        messages=[],
+        tools=[],
+        commands=[],
+        contexts=[],
+        raw_events=[],
+    )
+
+    assert store.forensic_overview()["agents"][0]["total_tokens"] is None
+    assert store.list_forensic_table("agents")[0]["total_tokens"] is None
+
+
 def test_collector_checkpoint_resilience_matrix(tmp_path, tmp_data_dir, monkeypatch):
     codex_home = tmp_path / "codex_home"
     session_dir = codex_home / "sessions"
@@ -419,6 +518,49 @@ def test_collector_checkpoint_resilience_matrix(tmp_path, tmp_data_dir, monkeypa
     assert diag["checkpoint_reset_count"] >= 1
     assert diag["replacement_detected"] or diag["truncation_detected"]
     assert diag["reset_reason"] in {"replacement_or_rewrite_detected", "truncation_detected"}
+
+
+def test_duplicate_raw_event_replay_does_not_increment_session_count(tmp_path, tmp_data_dir, monkeypatch):
+    codex_home = tmp_path / "codex_home"
+    session_dir = codex_home / "sessions"
+    session_dir.mkdir(parents=True)
+    session_file = session_dir / "session.jsonl"
+    event = {
+        "timestamp": "2026-09-12T00:00:00Z",
+        "type": "assistant_message",
+        "session_id": "s1",
+        "content": "answer",
+        "usage": {"input_tokens": 3, "output_tokens": 2},
+    }
+    session_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "missing_claude"))
+    monkeypatch.setenv("CCM_FREE_AI_REPO", str(tmp_path / "missing_free_ai"))
+    monkeypatch.setenv("CCM_ANTIGRAVITY_USAGE_SNAPSHOT", str(tmp_path / "missing_antigravity_usage.txt"))
+
+    from claude_codex_monitor.db.store import Store
+    from claude_codex_monitor.services.forensics_service import ForensicsService
+
+    store = Store(path=tmp_data_dir / "history.sqlite3")
+    service = ForensicsService(store)
+    assert service.refresh()["events_processed"] == 1
+
+    source = service.source_diagnostics()[0]
+    store.update_forensic_source_checkpoint(
+        source["source_id"],
+        checkpoint_offset=0,
+        events_processed=0,
+        events_skipped=0,
+        malformed_events=0,
+    )
+    replay = service.refresh()
+    detail = service.session_detail("s1")
+
+    assert replay["events_processed"] == 1
+    assert service.source_diagnostics()[0]["duplicate_events"] == 1
+    assert detail is not None
+    assert detail["session"]["raw_event_count"] == 1
+    assert service.overview()["counts"]["forensic_raw_events"] == 1
 
 
 def test_full_export_zip_scope_counts_and_summary_safety(tmp_path, tmp_data_dir, monkeypatch):
