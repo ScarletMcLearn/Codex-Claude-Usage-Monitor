@@ -20,6 +20,7 @@ from ..adapters.free_ai_adapter import credible_repo, free_ai_repo_path, read_us
 from ..db.store import Store
 from ..models.profile import sanitize_path
 from ..vendor.antigravity.usage_command import read_usage_snapshot, usage_snapshot_path
+from .token_accounting import TokenCounterSemantics
 
 PARSER_VERSION = "forensics.v2"
 _TEXT_KEYS = ("content", "text", "message", "prompt", "output", "response")
@@ -53,8 +54,10 @@ class ForensicsService:
     def overview(self) -> dict[str, Any]:
         return self._store.forensic_overview()
 
-    def sessions(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
-        return self._store.list_forensic_sessions(limit=limit, offset=offset)
+    def sessions(
+        self, *, limit: int = 100, offset: int = 0, filters: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        return self._store.list_forensic_sessions(limit=limit, offset=offset, filters=filters)
 
     def session_detail(self, session_id: str) -> dict[str, Any] | None:
         return self._store.forensic_session_detail(session_id)
@@ -65,7 +68,13 @@ class ForensicsService:
     def hotspots(self) -> dict[str, list[dict[str, Any]]]:
         return self._store.forensic_hotspots()
 
-    def export(self, *, export_type: str, warning_ack: bool) -> dict[str, Any]:
+    def export(
+        self,
+        *,
+        export_type: str,
+        warning_ack: bool,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if export_type == "full" and not warning_ack:
             raise ValueError(
                 "Full forensic export may contain prompts, source code, command output, "
@@ -75,13 +84,21 @@ class ForensicsService:
         export_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         out = export_dir / f"token-forensics-{export_type}-{stamp}.zip"
+        scoped_session_ids: set[str] | None = None
+        if filters:
+            scoped = self._store.list_forensic_sessions(limit=10_000, offset=0, filters=filters)
+            scoped_session_ids = {str(row["session_id"]) for row in scoped["items"]}
         tables = ["agents", "sessions", "turns"]
         if export_type == "full":
-            tables += ["messages", "tools", "commands", "context-blocks", "raw-events"]
+            tables += [
+                "messages", "tools", "commands", "context-blocks",
+                "file-accesses", "relationships", "raw-events",
+            ]
         with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             manifest = {
                 "created_at_utc": datetime.now(UTC).isoformat(),
                 "export_type": export_type,
+                "filters": filters or {},
                 "zero_ai_tokens": True,
                 "warning": (
                     "Full exports can contain sensitive local prompts, responses, code, "
@@ -92,6 +109,8 @@ class ForensicsService:
             zf.writestr("summary.json", json.dumps(self.overview(), indent=2))
             for table in tables:
                 table_rows = self._store.list_forensic_table(table)
+                if scoped_session_ids is not None and table != "agents":
+                    table_rows = _scope_rows(table_rows, scoped_session_ids)
                 lines = "\n".join(json.dumps(row, ensure_ascii=False) for row in table_rows)
                 zf.writestr(f"{table}.jsonl", lines + ("\n" if lines else ""))
             zf.writestr("report.md", _report_markdown(self.overview()))
@@ -153,6 +172,8 @@ class ForensicsService:
         tools: list[dict[str, Any]] = []
         commands: list[dict[str, Any]] = []
         contexts: list[dict[str, Any]] = []
+        file_accesses: list[dict[str, Any]] = []
+        relationships: list[dict[str, Any]] = []
         raw_events: list[dict[str, Any]] = []
         processed = skipped = malformed = 0
         offset = checkpoint
@@ -184,10 +205,13 @@ class ForensicsService:
                 tools.extend(event["tools"])
                 commands.extend(event["commands"])
                 contexts.extend(event["contexts"])
+                file_accesses.extend(event.get("file_accesses", []))
+                relationships.extend(event.get("relationships", []))
                 processed += 1
         self._store.insert_forensic_rows(
             sessions=list(sessions.values()), turns=turns, messages=messages,
             tools=tools, commands=commands, contexts=contexts, raw_events=raw_events,
+            file_accesses=_mark_file_repetition(file_accesses), relationships=relationships,
         )
         self._store.update_forensic_source_checkpoint(
             source["source_id"], checkpoint_offset=offset, events_processed=processed,
@@ -397,6 +421,10 @@ def _normalize_generic_event(
         "tools": tools,
         "commands": commands,
         "contexts": contexts,
+        "file_accesses": _file_accesses_from_tools(
+            tools, source["agent"], event_type, timestamp, raw_event_id
+        ),
+        "relationships": [],
         "raw_event": {
             "raw_event_id": raw_event_id,
             "source_id": source["source_id"],
@@ -440,6 +468,9 @@ def _normalize_codex_event(
     contexts = _context_from_messages(messages, payload_type, timestamp, raw_event_id)
     tools = _codex_tools(payload, session_id, turn_id, raw_event_id)
     commands = _extract_commands(payload, session_id, turn_id, raw_event_id)
+    file_accesses = _file_accesses_from_tools(
+        tools, "codex", payload_type, timestamp, raw_event_id
+    )
     text_by_role = [(m["role"], m.get("text") or "") for m in messages]
     user_text = next((t for r, t in text_by_role if r == "user"), None)
     assistant_text = next((t for r, t in text_by_role if r == "assistant"), None)
@@ -486,7 +517,7 @@ def _normalize_codex_event(
         "token_quality": turn["token_quality"],
     }
     return _event_bundle(
-        session, turn, messages, tools, commands, contexts, source, session_id,
+        session, turn, messages, tools, commands, contexts, file_accesses, [], source, session_id,
         index, offset, timestamp, payload_type, raw_hash, raw_json, raw_event_id,
     )
 
@@ -516,6 +547,12 @@ def _normalize_claude_event(
     contexts = _context_from_messages(messages, event_type, timestamp, raw_event_id)
     tools = _claude_tools(message, session_id, turn_id, raw_event_id)
     commands = _extract_commands(raw, session_id, turn_id, raw_event_id)
+    file_accesses = _file_accesses_from_tools(
+        tools, "claude", event_type, timestamp, raw_event_id
+    )
+    relationships = _claude_relationships(
+        raw, session_id, turn_id, timestamp, source["source_id"], raw_event_id
+    )
     text_by_role = [(m["role"], m.get("text") or "") for m in messages]
     user_text = next((t for r, t in text_by_role if r == "user"), None)
     assistant_text = next((t for r, t in text_by_role if r == "assistant"), None)
@@ -528,7 +565,7 @@ def _normalize_claude_event(
         "source_format": "claude.projects_jsonl",
         "parent_uuid": parent_id,
         "is_sidechain": bool(raw.get("isSidechain")),
-        "token_semantics": usage.pop("_semantics", "per_message_reported_usage"),
+        "token_semantics": usage.pop("_semantics", TokenCounterSemantics.PER_REQUEST.value),
     }
     turn = {
         "turn_id": turn_id,
@@ -564,7 +601,7 @@ def _normalize_claude_event(
         "token_quality": turn["token_quality"],
     }
     return _event_bundle(
-        session, turn, messages, tools, commands, contexts, source, session_id,
+        session, turn, messages, tools, commands, contexts, file_accesses, relationships, source, session_id,
         index, offset, timestamp, event_type, raw_hash, raw_json, raw_event_id,
     )
 
@@ -596,14 +633,14 @@ def _codex_usage(payload: dict[str, Any]) -> dict[str, Any]:
         info = payload.get("info") if isinstance(payload.get("info"), dict) else None
         if info:
             usage = dict(_find_usage(info))
-            usage["_semantics"] = "codex_token_count_info_observed"
+            usage["_semantics"] = TokenCounterSemantics.PER_TURN.value
         else:
-            usage["_semantics"] = "codex_rate_limit_event_no_model_token_usage"
+            usage["_semantics"] = TokenCounterSemantics.QUOTA_ONLY.value
         return usage
     usage["_semantics"] = (
-        "codex_response_item_reported_usage"
+        TokenCounterSemantics.PER_REQUEST.value
         if any(value is not None for value in usage.values())
-        else "unavailable_from_source_telemetry"
+        else TokenCounterSemantics.UNKNOWN.value
     )
     return usage
 
@@ -629,7 +666,7 @@ def _claude_usage(message: dict[str, Any]) -> dict[str, Any]:
             _nested(usage_obj.get("output_tokens_details"), ("reasoning_tokens",))
         ),
         "context_tokens": None,
-        "_semantics": "claude_assistant_message_usage_per_api_response",
+        "_semantics": TokenCounterSemantics.PER_REQUEST.value,
     }
     if (
         usage["total_tokens"] is None
@@ -822,6 +859,116 @@ def _claude_tools(
     return tools
 
 
+def _file_accesses_from_tools(
+    tools: list[dict[str, Any]],
+    agent: str,
+    operation: str,
+    timestamp: str | None,
+    raw_event_id: str,
+) -> list[dict[str, Any]]:
+    rows = []
+    for tool in tools:
+        args = _json_dict(tool.get("arguments_json"))
+        path = _tool_path(args)
+        if not path:
+            continue
+        output = tool.get("output_text") if isinstance(tool.get("output_text"), str) else ""
+        stats = _text_stats(output)
+        line_start = _int_or_none(args.get("start") or args.get("line_start") or args.get("offset"))
+        line_end = _int_or_none(args.get("end") or args.get("line_end") or args.get("limit"))
+        rows.append({
+            "file_access_id": _stable_id(raw_event_id, "file", str(tool.get("tool_call_id")), path),
+            "source_event_id": raw_event_id,
+            "session_id": tool["session_id"],
+            "turn_id": tool.get("turn_id"),
+            "agent": agent,
+            "operation": str(tool.get("tool_name") or operation),
+            "path": path,
+            "normalized_path": _normalize_file_path(path),
+            "access_kind": _file_access_kind(str(tool.get("tool_name") or operation)),
+            "requested_range": _range_text(line_start, line_end),
+            "actual_range": _range_text(line_start, line_end),
+            "line_start": line_start,
+            "line_end": line_end,
+            "line_count": stats["lines"] if output else None,
+            "bytes": stats["bytes"] if output else tool.get("output_bytes"),
+            "characters": stats["chars"] if output else tool.get("output_chars"),
+            "content_hash": stats["hash"] if output else tool.get("content_hash"),
+            "repeated_path": 0,
+            "repeated_content": 0,
+            "entered_model_context": 1 if output else 0,
+            "reported_tokens": _int_or_none(args.get("token_count") or args.get("tokens")),
+            "estimated_tokens": _estimate_tokens(output),
+            "token_quality": "estimated" if output else "unknown",
+            "timestamp_utc": timestamp,
+            "provenance_json": json.dumps(
+                {
+                    "parser_version": PARSER_VERSION,
+                    "source_tool_call_id": tool.get("tool_call_id"),
+                    "source_metric": "tool_argument_file_path",
+                },
+                ensure_ascii=False,
+            ),
+        })
+    return rows
+
+
+def _mark_file_repetition(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen_paths: set[str] = set()
+    seen_content: set[str] = set()
+    for row in sorted(rows, key=lambda r: (str(r.get("timestamp_utc") or ""), str(r["file_access_id"]))):
+        normalized = str(row.get("normalized_path") or "")
+        content_hash = str(row.get("content_hash") or "")
+        row["repeated_path"] = 1 if normalized in seen_paths else 0
+        row["repeated_content"] = 1 if content_hash and content_hash in seen_content else 0
+        if normalized:
+            seen_paths.add(normalized)
+        if content_hash:
+            seen_content.add(content_hash)
+    return rows
+
+
+def _claude_relationships(
+    raw: dict[str, Any],
+    session_id: str,
+    turn_id: str,
+    timestamp: str | None,
+    source_id: str,
+    raw_event_id: str,
+) -> list[dict[str, Any]]:
+    parent_uuid = raw.get("parentUuid") if isinstance(raw.get("parentUuid"), str) else None
+    if not parent_uuid and not raw.get("isSidechain"):
+        return []
+    relationship_type = "sidechain_parent_message" if raw.get("isSidechain") else "parent_message"
+    parent_turn_id = _stable_id(session_id, "claude-turn", parent_uuid) if parent_uuid else None
+    evidence = {
+        "parser_version": PARSER_VERSION,
+        "raw_event_id": raw_event_id,
+        "source_id": source_id,
+        "parent_uuid": parent_uuid,
+        "child_uuid": raw.get("uuid"),
+        "is_sidechain": bool(raw.get("isSidechain")),
+        "semantic_note": (
+            "Claude parentUuid links messages; not proof of separate sub-agent "
+            "unless sidechain evidence exists."
+        ),
+    }
+    return [{
+        "relationship_id": _stable_id(raw_event_id, "relationship", parent_uuid or "sidechain"),
+        "source": "claude.projects_jsonl",
+        "parent_session_id": session_id if parent_uuid else None,
+        "parent_turn_id": parent_turn_id,
+        "parent_agent": "claude" if parent_uuid else None,
+        "child_session_id": session_id,
+        "child_turn_id": turn_id,
+        "child_agent": "claude",
+        "relationship_type": relationship_type,
+        "evidence_json": json.dumps(evidence, ensure_ascii=False),
+        "timestamp_utc": timestamp,
+        "confidence": "observed",
+    }]
+
+
 def _event_bundle(
     session: dict[str, Any],
     turn: dict[str, Any],
@@ -829,6 +976,8 @@ def _event_bundle(
     tools: list[dict[str, Any]],
     commands: list[dict[str, Any]],
     contexts: list[dict[str, Any]],
+    file_accesses: list[dict[str, Any]],
+    relationships: list[dict[str, Any]],
     source: dict[str, Any],
     session_id: str,
     index: int,
@@ -846,6 +995,8 @@ def _event_bundle(
         "tools": tools,
         "commands": commands,
         "contexts": contexts,
+        "file_accesses": file_accesses,
+        "relationships": relationships,
         "raw_event": {
             "raw_event_id": raw_event_id,
             "source_id": source["source_id"],
@@ -945,6 +1096,49 @@ def _extract_commands(
             "raw_event_id": raw_event_id,
         })
     return commands
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _tool_path(args: dict[str, Any]) -> str | None:
+    for key in ("file_path", "path", "filepath", "filename", "file", "query"):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _normalize_file_path(path: str) -> str:
+    return path.replace("\\", "/").strip().lower()
+
+
+def _file_access_kind(tool_name: str) -> str:
+    lowered = tool_name.lower()
+    if any(part in lowered for part in ("write", "edit", "patch")):
+        return "write"
+    if any(part in lowered for part in ("grep", "search", "find")):
+        return "search"
+    return "read"
+
+
+def _range_text(start: int | None, end: int | None) -> str | None:
+    if start is None and end is None:
+        return None
+    if start is None:
+        return f"..{end}"
+    if end is None:
+        return f"{start}.."
+    return f"{start}..{end}"
 
 
 def _walk_dicts(value: Any):
@@ -1071,3 +1265,16 @@ def _report_markdown(overview: dict[str, Any]) -> str:
         "## Counts",
         *(f"- {key}: {value}" for key, value in counts.items()),
     ])
+
+
+def _scope_rows(rows: list[dict[str, Any]], session_ids: set[str]) -> list[dict[str, Any]]:
+    scoped = []
+    for row in rows:
+        session_values = {
+            row.get("session_id"),
+            row.get("parent_session_id"),
+            row.get("child_session_id"),
+        }
+        if any(value in session_ids for value in session_values if value is not None):
+            scoped.append(row)
+    return scoped

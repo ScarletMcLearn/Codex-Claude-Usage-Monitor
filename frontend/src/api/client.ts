@@ -8,7 +8,7 @@ import type {
   UsageReport,
   ForensicOverview,
   ForensicHotspots,
-  ForensicSession,
+  PaginatedForensicSessions,
   ForensicSessionDetail,
   ForensicTurnDetail,
   UsageLimit,
@@ -91,7 +91,26 @@ export const api = {
     malformed_events: number
     model_generation_requests: number
   }>('/forensics/refresh', { method: 'POST' }),
-  forensicSessions: () => request<ForensicSession[]>('/forensics/sessions?limit=50'),
+  forensicSessions: (params?: {
+    offset?: number
+    agent?: string
+    token_quality?: string
+    min_total_tokens?: number
+    has_tools?: boolean
+    has_commands?: boolean
+    has_child_relationships?: boolean
+  }) => {
+    const query = new URLSearchParams()
+    query.set('limit', '50')
+    query.set('offset', String(params?.offset ?? 0))
+    if (params?.agent) query.set('agent', params.agent)
+    if (params?.token_quality) query.set('token_quality', params.token_quality)
+    if (params?.min_total_tokens != null) query.set('min_total_tokens', String(params.min_total_tokens))
+    if (params?.has_tools) query.set('has_tools', 'true')
+    if (params?.has_commands) query.set('has_commands', 'true')
+    if (params?.has_child_relationships) query.set('has_child_relationships', 'true')
+    return request<PaginatedForensicSessions>(`/forensics/sessions?${query.toString()}`)
+  },
   forensicSession: (sessionId: string) =>
     request<ForensicSessionDetail>(`/forensics/sessions/${encodeURIComponent(sessionId)}`),
   forensicTurn: (turnId: string) =>

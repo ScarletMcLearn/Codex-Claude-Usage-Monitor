@@ -70,6 +70,11 @@ SQLite tables are prefixed with `forensic_`:
 - `forensic_context_blocks`: context fingerprints for duplicate detection.
 - `forensic_tool_calls`: tool invocation evidence when exposed.
 - `forensic_commands`: command/stdout/stderr evidence when exposed.
+- `forensic_file_accesses`: explicit tool/file access evidence, path/content
+  repetition flags, and estimated context contribution where output is exposed.
+- `forensic_relationships`: observed parent-message/sidechain evidence. Parent
+  UUID links are not labeled as separate sub-agents unless source evidence proves
+  that semantic.
 - `forensic_raw_events`: immutable raw JSON event payloads.
 - `forensic_exports`: export metadata.
 
@@ -89,7 +94,10 @@ The dashboard includes a Token Forensics section:
 - chronological session turn timeline;
 - turn evidence view for input/output, token labels, context, tools, commands,
   raw event, and parser provenance;
-- tool, command, and context hotspots;
+- tool, command, context, and file hotspots;
+- file-access drill-down for path, operation, range, size, repetition, context
+  contribution, and quality;
+- relationship evidence for parent-message/sidechain links;
 - summary export;
 - full forensic export with warning.
 
@@ -100,10 +108,43 @@ UI shows previews.
 
 Summary exports include manifest, overview, agents, sessions, and turns.
 
-Full exports add messages, tools, commands, context blocks, and raw events. Full
-exports can contain prompts, model output, source code excerpts, and command
-output, so the UI/API require explicit warning acknowledgment. Exports are local
-ZIP files and are never uploaded automatically.
+Full exports add messages, tools, commands, context blocks, file accesses,
+relationships, and raw events. Full exports can contain prompts, model output,
+source code excerpts, and command output, so the UI/API require explicit warning
+acknowledgment. Exports are local ZIP files and are never uploaded automatically.
+Session, agent, provider, model, project, and date filters can scope exports;
+related rows are filtered by session IDs.
+
+## Support Matrix
+
+| Capability | Codex | Claude |
+| --- | --- | --- |
+| session ID | Supported | Supported |
+| turn ID | Supported | Supported |
+| model | Partially supported | Supported when `message.model` exists |
+| project | Supported when `cwd` exists | Supported when `cwd` exists |
+| branch | Unavailable from current parser | Supported when `gitBranch` exists |
+| raw user text | Supported when event exposes text | Supported when `message.content` exposes text |
+| raw assistant text | Supported when event exposes text | Supported when `message.content` exposes text |
+| reported input tokens | Partially supported | Supported from assistant `message.usage` |
+| reported output tokens | Partially supported | Supported from assistant `message.usage` |
+| cache tokens | Partially supported | Supported when usage exposes cache fields |
+| reasoning tokens | Partially supported | Partially supported when usage exposes details |
+| current context | Not yet implemented | Not yet implemented |
+| cumulative tokens | Framework implemented; source support partial | Framework implemented; source support unavailable in observed data |
+| tool calls | Supported | Supported |
+| tool output | Supported when exposed | Supported when exposed |
+| commands | Supported when command-shaped payloads exist | Supported when command-shaped payloads exist |
+| file access | Partially supported from explicit tool args | Partially supported from explicit tool args |
+| parent relationships | Unavailable from source | Supported as parent-message evidence |
+| child-agent relationships | Unavailable from source | Partially supported only when sidechain evidence exists |
+| retry data | Not yet implemented | Not yet implemented |
+| fallback data | Not yet implemented | Not yet implemented |
+| compaction | Raw event retained | Raw event retained |
+| raw event retention | Supported | Supported |
+| provenance | Supported | Supported |
+| UI support | Supported | Supported |
+| export support | Supported | Supported |
 
 ## Zero-Token Guarantee
 
@@ -137,7 +178,6 @@ run provider commands when enabled by existing settings; those are not used by
 
 Telemetry formats vary and may change. Best-effort parsers preserve raw events so
 future versions can reparse richer fields. Hidden reasoning and non-exposed
-client context cannot be recovered. Unknown values are not guessed. Dedicated
-file-access and sub-agent hierarchy tables are not yet present; file/child-agent
-evidence is available only when source telemetry exposes it through messages,
-tools, commands, or raw provenance.
+client context cannot be recovered. Unknown values are not guessed. File access
+and relationship rows are recorded only when source telemetry explicitly exposes
+the evidence.

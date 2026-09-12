@@ -492,6 +492,8 @@ class Store:
         commands: list[dict[str, Any]],
         contexts: list[dict[str, Any]],
         raw_events: list[dict[str, Any]],
+        file_accesses: list[dict[str, Any]] | None = None,
+        relationships: list[dict[str, Any]] | None = None,
     ) -> None:
         with self._connect() as connection:
             connection.execute("BEGIN")
@@ -529,6 +531,8 @@ class Store:
                     ("forensic_tool_calls", tools, _TOOL_COLUMNS),
                     ("forensic_commands", commands, _COMMAND_COLUMNS),
                     ("forensic_context_blocks", contexts, _CONTEXT_COLUMNS),
+                    ("forensic_file_accesses", file_accesses or [], _FILE_ACCESS_COLUMNS),
+                    ("forensic_relationships", relationships or [], _RELATIONSHIP_COLUMNS),
                 ):
                     if not rows:
                         continue
@@ -554,6 +558,8 @@ class Store:
                 "forensic_tool_calls",
                 "forensic_commands",
                 "forensic_context_blocks",
+                "forensic_file_accesses",
+                "forensic_relationships",
                 "forensic_raw_events",
             ):
                 counts[name] = int(connection.execute(f"SELECT COUNT(*) AS n FROM {name}").fetchone()["n"])
@@ -599,17 +605,26 @@ class Store:
             },
         }
 
-    def list_forensic_sessions(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    def list_forensic_sessions(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        where, params = _forensic_session_filter_sql(filters or {})
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT * FROM forensic_sessions
+                {where}
                 ORDER BY COALESCE(started_at_utc, ended_at_utc) DESC
                 LIMIT ? OFFSET ?
                 """,
-                (limit, offset),
+                (*params, limit + 1, offset),
             ).fetchall()
-        return [dict(row) for row in rows]
+        items = [dict(row) for row in rows[:limit]]
+        return {"items": items, "limit": limit, "offset": offset, "has_more": len(rows) > limit}
 
     def forensic_session_detail(self, session_id: str, *, limit: int = 100) -> dict[str, Any] | None:
         with self._connect() as connection:
@@ -640,12 +655,29 @@ class Store:
                 """,
                 (session_id, limit),
             ).fetchall()
+            files = connection.execute(
+                """
+                SELECT * FROM forensic_file_accesses
+                WHERE session_id = ? ORDER BY timestamp_utc, file_access_id LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+            relationships = connection.execute(
+                """
+                SELECT * FROM forensic_relationships
+                WHERE child_session_id = ? OR parent_session_id = ?
+                ORDER BY timestamp_utc, relationship_id LIMIT ?
+                """,
+                (session_id, session_id, limit),
+            ).fetchall()
         return {
             "session": dict(session),
             "turns": [dict(row) for row in turns],
             "tools": [dict(row) for row in tools],
             "commands": [dict(row) for row in commands],
             "context_blocks": [dict(row) for row in contexts],
+            "file_accesses": [dict(row) for row in files],
+            "relationships": [dict(row) for row in relationships],
         }
 
     def forensic_turn_detail(self, turn_id: str, *, limit: int = 200) -> dict[str, Any] | None:
@@ -703,6 +735,21 @@ class Store:
                 """,
                 (turn["raw_event_id"], limit),
             ).fetchall()
+            files = connection.execute(
+                """
+                SELECT * FROM forensic_file_accesses
+                WHERE turn_id = ? ORDER BY timestamp_utc, file_access_id LIMIT ?
+                """,
+                (turn_id, limit),
+            ).fetchall()
+            relationships = connection.execute(
+                """
+                SELECT * FROM forensic_relationships
+                WHERE child_turn_id = ? OR parent_turn_id = ?
+                ORDER BY timestamp_utc, relationship_id LIMIT ?
+                """,
+                (turn_id, turn_id, limit),
+            ).fetchall()
         return {
             "session": dict(session) if session else None,
             "turn": dict(turn),
@@ -710,6 +757,8 @@ class Store:
             "tools": [dict(row) for row in tools],
             "commands": [dict(row) for row in commands],
             "context_blocks": [dict(row) for row in contexts],
+            "file_accesses": [dict(row) for row in files],
+            "relationships": [dict(row) for row in relationships],
             "raw_events": [dict(row) for row in raw_events],
         }
 
@@ -749,10 +798,29 @@ class Store:
                 """,
                 (limit,),
             ).fetchall()
+            files = connection.execute(
+                """
+                SELECT normalized_path, MIN(path) AS path, operation,
+                       COUNT(*) AS accesses,
+                       SUM(COALESCE(repeated_path, 0)) AS rereads,
+                       SUM(COALESCE(repeated_content, 0)) AS repeated_identical_content,
+                       SUM(COALESCE(characters, 0)) AS characters,
+                       SUM(COALESCE(estimated_tokens, 0)) AS estimated_tokens,
+                       MAX(COALESCE(characters, 0)) AS largest_injection_chars,
+                       COUNT(DISTINCT session_id) AS sessions,
+                       COUNT(DISTINCT turn_id) AS turns
+                FROM forensic_file_accesses
+                GROUP BY normalized_path, operation
+                ORDER BY accesses DESC, characters DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
         return {
             "tools": [dict(row) for row in tools],
             "commands": [dict(row) for row in commands],
             "context": [dict(row) for row in context],
+            "files": [dict(row) for row in files],
         }
 
     def list_forensic_table(self, table: str) -> list[dict[str, Any]]:
@@ -768,6 +836,8 @@ class Store:
             "tools": "SELECT * FROM forensic_tool_calls",
             "commands": "SELECT * FROM forensic_commands",
             "context-blocks": "SELECT * FROM forensic_context_blocks",
+            "file-accesses": "SELECT * FROM forensic_file_accesses",
+            "relationships": "SELECT * FROM forensic_relationships",
             "raw-events": "SELECT * FROM forensic_raw_events",
         }
         if table not in allowed:
@@ -808,6 +878,76 @@ _CONTEXT_COLUMNS = (
     "char_count", "byte_count", "line_count", "content_hash", "estimated_tokens",
     "token_quality", "first_seen_utc", "raw_event_id",
 )
+_FILE_ACCESS_COLUMNS = (
+    "file_access_id", "source_event_id", "session_id", "turn_id", "agent",
+    "operation", "path", "normalized_path", "access_kind", "requested_range",
+    "actual_range", "line_start", "line_end", "line_count", "bytes", "characters",
+    "content_hash", "repeated_path", "repeated_content", "entered_model_context",
+    "reported_tokens", "estimated_tokens", "token_quality", "timestamp_utc",
+    "provenance_json",
+)
+_RELATIONSHIP_COLUMNS = (
+    "relationship_id", "source", "parent_session_id", "parent_turn_id",
+    "parent_agent", "child_session_id", "child_turn_id", "child_agent",
+    "relationship_type", "evidence_json", "timestamp_utc", "confidence",
+)
+
+
+def _forensic_session_filter_sql(filters: dict[str, Any]) -> tuple[str, list[Any]]:
+    clauses = ["WHERE 1=1"]
+    params: list[Any] = []
+    mapping = {
+        "agent": "agent",
+        "provider": "provider",
+        "model": "model",
+        "project": "project_path",
+        "repository": "repository_path",
+        "branch": "branch",
+        "worktree": "worktree",
+        "session_id": "session_id",
+        "token_quality": "token_quality",
+    }
+    for key, column in mapping.items():
+        value = filters.get(key)
+        if value:
+            if key in {"project", "repository", "worktree"}:
+                clauses.append(f"{column} LIKE ?")
+                params.append(f"%{value}%")
+            else:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+    if filters.get("since_utc"):
+        clauses.append("COALESCE(started_at_utc, ended_at_utc) >= ?")
+        params.append(filters["since_utc"])
+    if filters.get("until_utc"):
+        clauses.append("COALESCE(started_at_utc, ended_at_utc) <= ?")
+        params.append(filters["until_utc"])
+    for key, column in (
+        ("min_total_tokens", "total_tokens"),
+        ("min_input_tokens", "input_tokens"),
+        ("min_output_tokens", "output_tokens"),
+    ):
+        value = filters.get(key)
+        if value is not None:
+            clauses.append(f"COALESCE({column}, 0) >= ?")
+            params.append(value)
+    if filters.get("has_tools"):
+        clauses.append(
+            "EXISTS (SELECT 1 FROM forensic_tool_calls t "
+            "WHERE t.session_id = forensic_sessions.session_id)"
+        )
+    if filters.get("has_commands"):
+        clauses.append(
+            "EXISTS (SELECT 1 FROM forensic_commands c "
+            "WHERE c.session_id = forensic_sessions.session_id)"
+        )
+    if filters.get("has_child_relationships"):
+        clauses.append(
+            "EXISTS (SELECT 1 FROM forensic_relationships r "
+            "WHERE r.parent_session_id = forensic_sessions.session_id "
+            "OR r.child_session_id = forensic_sessions.session_id)"
+        )
+    return " ".join(clauses), params
 
 
 def _session_tuple(row: dict[str, Any]) -> tuple[Any, ...]:

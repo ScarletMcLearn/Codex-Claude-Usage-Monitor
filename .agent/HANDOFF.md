@@ -3,52 +3,54 @@
 # Codex Agent Handover
 
 ## Objective
-Continue existing Claude & Codex Usage Monitor repo. Do not restart or replace foundation. Extend passive zero-token forensic subsystem with real Codex/Claude semantic parsing, token provenance, drill-down APIs/UI, repeated-context/hotspot analysis, exports, and verification as much as safely possible.
+Continue existing Claude & Codex Usage Monitor repo. Preserve forensic architecture and zero-token guarantee. Implement focused continuation across explicit token semantics/cumulative accounting, file-access model, relationship model, filters/pagination/export scopes, ingestion resilience tests, UI/test coverage, docs/support matrix where practical.
 
 ## Current status
-Audit started. Foundation exists: generic passive JSONL ingestion for Codex/Claude files, Free-AI summary, Antigravity snapshot, SQLite forensic tables, forensics API, frontend Token Forensics panel, warning-gated exports, zero-token counters/tests. Current parser is generic and not source-specific enough.
+Initial repo inspection done. Only pre-existing dirty file was `.agent/HANDOFF.md`; no user code changes existed at start of this pass. Reading backend schema/store/service/API/tests and frontend forensics panel before scoped edits.
 
 ## Completed work
-- Read user continuation request and repo instructions.
-- Ran required initial `git status --short` and `git diff --stat`; both returned no visible output in this session.
-- Read current `forensics_service.py`, `schema.sql`, `store.py`, forensics router, frontend panel, API client/types, and existing tests.
-- Confirmed local telemetry files exist under `%USERPROFILE%\.codex\sessions` and `%USERPROFILE%\.claude\projects`.
-- Sampled top-level event keys only, avoiding private prompt/output display.
+- Read pasted continuation request.
+- Loaded `caveman` skill per global AGENTS instructions.
+- Ran `git status --short`: only `.agent/HANDOFF.md` modified before this pass.
+- Ran `git diff --stat`: only `.agent/HANDOFF.md`.
+- Inspected forensic schema, service, API router, store, backend tests, and frontend panel.
 
 ## Files changed
-- `.agent/HANDOFF.md`: reopened active handoff with current objective/audit.
+- `.agent/HANDOFF.md`: replaced previous COMPLETE handoff with ACTIVE current continuation handoff.
 
 ## Commands and tests run
-- `git status --short`: no output observed.
-- `git diff --stat`: no output observed.
-- `rg --files -g '!*node_modules*' -g '!*.log'`: inspected file inventory.
-- `Get-Content` on relevant source/test files: audit only.
-- Telemetry sampling commands read top-level keys only from first Codex/Claude JSONL files.
+- `git status --short`: showed ` M .agent/HANDOFF.md`.
+- `git diff --stat`: showed `.agent/HANDOFF.md` only.
+- `rg --files ...`: listed repo files for targeted inspection.
+- Multiple `Get-Content` reads for forensic code/tests.
 
 ## Current failures or blockers
-None yet. Need inspect event schemas further, using sanitized shape/key extraction only.
+None yet. Tests not run in this pass.
 
 ## Decisions and assumptions
-- Forensic path must remain passive: no model API calls, no agent prompts, no telemetry-gathering subprocesses that can generate AI.
-- Preserve existing quota monitoring and forensic monitoring separation.
-- Unknown token values stay NULL/unknown; deterministic estimates must be labeled estimated.
-- User wants no commit.
+- Do not revert unrelated work.
+- Do not generate model/agent requests. No `/usage`, `doctor`, `status`, model APIs, or subagents.
+- Keep changes conservative and deterministic. Accounting correctness beats feature breadth.
+- Existing service names and API shapes should stay compatible where possible.
 
 ## Exact next steps
-1. Extract sanitized nested key/type shapes from real Codex and Claude JSONL.
-2. Add source-specific parser functions and sanitized fixtures.
-3. Improve token semantics, cumulative-to-delta handling, provenance, turn association.
-4. Add store/API endpoints for turn detail, repeated context, hotspots/raw provenance as feasible.
-5. Expand frontend drill-down enough to inspect sessions/turns/evidence.
-6. Run focused backend/frontend tests and zero-token regression.
+1. Add token counter semantics enum/helper and cumulative-to-delta function with unit tests.
+2. Add idempotent schema tables/indexes for file accesses and relationships.
+3. Extend store insertion/detail/hotspots/export methods for new tables.
+4. Extract file access conservatively from proven tool evidence (Claude Read/Edit/Grep and Codex tool args where explicit).
+5. Extract parent-message/sidechain relationship evidence conservatively from Claude `parentUuid`/`isSidechain`.
+6. Add API filters/pagination envelope without breaking frontend.
+7. Update frontend types/client/panel for file access, relationship tree, filters/pagination/export scopes.
+8. Add focused backend/frontend tests, then run targeted verification.
+9. Update docs/support matrix.
 
 ## Risks and warnings
-- Real telemetry contains private prompts/outputs; do not print private content in final.
-- Source formats may vary across years/tools; retain unknown raw events.
-- Avoid broad commands and large output dumps.
+- Raw telemetry may contain prompts, source code, command output, and model output. Do not print private contents in logs/final.
+- Full export remains warning-gated.
+- Windows sandbox may require escalation for `uv` cache or frontend native package execution, as previous pass observed.
 
 ## Repository state
-Initial visible state: no output from `git status --short` or `git diff --stat` in this session.
+Start state: `.agent/HANDOFF.md` modified only.
 
 ## Last updated
-2026-09-12T23:58:00+06:00
+2026-09-13T00:30:00+06:00

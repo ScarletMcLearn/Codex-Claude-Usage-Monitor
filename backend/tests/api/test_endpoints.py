@@ -132,7 +132,8 @@ def test_forensics_api_zero_token_empty_state(tmp_data_dir, tmp_path, monkeypatc
 
     r = client.get("/api/forensics/sessions")
     assert r.status_code == 200
-    assert isinstance(r.json(), list)
+    assert isinstance(r.json()["items"], list)
+    assert r.json()["has_more"] is False
 
     r = client.post("/api/forensics/export?export_type=full")
     assert r.status_code == 400

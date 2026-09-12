@@ -21,8 +21,18 @@ export function ForensicsPanel() {
   const queryClient = useQueryClient()
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [turnId, setTurnId] = useState<string | null>(null)
+  const [offset, setOffset] = useState(0)
+  const [agentFilter, setAgentFilter] = useState('')
+  const [qualityFilter, setQualityFilter] = useState('')
   const overview = useQuery({ queryKey: ['forensics-overview'], queryFn: api.forensicOverview })
-  const sessions = useQuery({ queryKey: ['forensics-sessions'], queryFn: api.forensicSessions })
+  const sessions = useQuery({
+    queryKey: ['forensics-sessions', offset, agentFilter, qualityFilter],
+    queryFn: () => api.forensicSessions({
+      offset,
+      agent: agentFilter || undefined,
+      token_quality: qualityFilter || undefined,
+    }),
+  })
   const session = useQuery({
     queryKey: ['forensics-session', sessionId],
     queryFn: () => api.forensicSession(sessionId ?? ''),
@@ -127,7 +137,25 @@ export function ForensicsPanel() {
       </div>
 
       <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
-        <h3 className="font-semibold text-slate-800 dark:text-slate-100">Sessions</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-semibold text-slate-800 dark:text-slate-100">Sessions</h3>
+          <div className="flex flex-wrap gap-2 text-sm">
+            <select className="rounded-md border border-slate-300 bg-transparent px-2 py-1 dark:border-slate-700" value={agentFilter} onChange={(event) => { setOffset(0); setAgentFilter(event.target.value) }}>
+              <option value="">All agents</option>
+              <option value="codex">Codex</option>
+              <option value="claude">Claude</option>
+              <option value="free_ai">Free-AI</option>
+              <option value="antigravity">Antigravity</option>
+            </select>
+            <select className="rounded-md border border-slate-300 bg-transparent px-2 py-1 dark:border-slate-700" value={qualityFilter} onChange={(event) => { setOffset(0); setQualityFilter(event.target.value) }}>
+              <option value="">All qualities</option>
+              <option value="reported">Reported</option>
+              <option value="derived">Derived</option>
+              <option value="estimated">Estimated</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </div>
+        </div>
         <div className="mt-3 overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="text-xs uppercase text-slate-500">
@@ -141,7 +169,7 @@ export function ForensicsPanel() {
               </tr>
             </thead>
             <tbody>
-              {(sessions.data ?? []).map((row) => (
+              {(sessions.data?.items ?? []).map((row) => (
                 <tr key={row.session_id} className="border-t border-slate-100 dark:border-slate-800">
                   <td className="py-2 pr-4">
                     <button className="font-medium text-slate-900 underline-offset-2 hover:underline dark:text-slate-50" onClick={() => { setSessionId(row.session_id); setTurnId(null) }}>
@@ -157,7 +185,16 @@ export function ForensicsPanel() {
               ))}
             </tbody>
           </table>
-          {(sessions.data ?? []).length === 0 && <p className="py-4 text-sm text-slate-500">No forensic sessions ingested yet.</p>}
+          {(sessions.data?.items ?? []).length === 0 && <p className="py-4 text-sm text-slate-500">No forensic sessions ingested yet.</p>}
+        </div>
+        <div className="mt-3 flex items-center justify-between text-sm">
+          <button className="rounded-md border border-slate-300 px-3 py-1 disabled:opacity-40 dark:border-slate-700" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))}>
+            Previous
+          </button>
+          <span>Offset {sessions.data?.offset ?? offset}</span>
+          <button className="rounded-md border border-slate-300 px-3 py-1 disabled:opacity-40 dark:border-slate-700" disabled={!sessions.data?.has_more} onClick={() => setOffset(offset + 50)}>
+            Next
+          </button>
         </div>
       </div>
 
@@ -176,6 +213,28 @@ export function ForensicsPanel() {
               </button>
             ))}
           </div>
+          <EvidenceList title="File Access">
+            {session.data.file_accesses.map((row, index) => (
+              <button key={index} className="block w-full rounded-md border border-slate-200 p-3 text-left text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900" onClick={() => row.turn_id && setTurnId(String(row.turn_id))}>
+                <div className="font-medium">{textValue(row.path)}</div>
+                <div className="text-xs text-slate-500">
+                  {textValue(row.operation)} · {textValue(row.actual_range)} · chars {textValue(row.characters)} · tokens {tokenText(row.estimated_tokens as number | null)} · quality {textValue(row.token_quality)}
+                </div>
+                <div className="text-xs text-slate-500">
+                  repeated path {textValue(row.repeated_path)} · repeated content {textValue(row.repeated_content)}
+                </div>
+              </button>
+            ))}
+            {session.data.file_accesses.length === 0 && <p className="text-sm text-slate-500">No explicit file access evidence.</p>}
+          </EvidenceList>
+          <EvidenceList title="Relationships">
+            {session.data.relationships.map((row, index) => (
+              <pre key={index} className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">
+                {preview(JSON.stringify(row, null, 2))}
+              </pre>
+            ))}
+            {session.data.relationships.length === 0 && <p className="text-sm text-slate-500">No parent/child evidence.</p>}
+          </EvidenceList>
         </div>
       )}
 
@@ -198,7 +257,7 @@ export function ForensicsPanel() {
             ))}
           </EvidenceList>
           <EvidenceList title="Tools / Commands / Context">
-            {[...turnDetail.tools, ...turnDetail.commands, ...turnDetail.context_blocks].map((row, index) => (
+            {[...turnDetail.tools, ...turnDetail.commands, ...turnDetail.file_accesses, ...turnDetail.context_blocks].map((row, index) => (
               <pre key={index} className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">
                 {preview(JSON.stringify(row, null, 2))}
               </pre>
@@ -218,6 +277,7 @@ export function ForensicsPanel() {
         <Hotspot title="Tool Hotspots" rows={hotspots.data?.tools ?? []} nameKey="tool_name" />
         <Hotspot title="Command Hotspots" rows={hotspots.data?.commands ?? []} nameKey="command" />
         <Hotspot title="Context Hotspots" rows={hotspots.data?.context ?? []} nameKey="category" />
+        <Hotspot title="File Hotspots" rows={hotspots.data?.files ?? []} nameKey="path" />
       </div>
     </section>
   )

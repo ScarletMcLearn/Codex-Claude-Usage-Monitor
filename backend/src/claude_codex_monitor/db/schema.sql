@@ -217,6 +217,51 @@ CREATE TABLE IF NOT EXISTS forensic_context_blocks (
     FOREIGN KEY(session_id) REFERENCES forensic_sessions(session_id)
 );
 
+CREATE TABLE IF NOT EXISTS forensic_file_accesses (
+    file_access_id        TEXT PRIMARY KEY,
+    source_event_id       TEXT NOT NULL,
+    session_id            TEXT NOT NULL,
+    turn_id               TEXT,
+    agent                 TEXT NOT NULL,
+    operation             TEXT NOT NULL,
+    path                  TEXT,
+    normalized_path       TEXT,
+    access_kind           TEXT NOT NULL,
+    requested_range       TEXT,
+    actual_range          TEXT,
+    line_start            INTEGER,
+    line_end              INTEGER,
+    line_count            INTEGER,
+    bytes                 INTEGER,
+    characters            INTEGER,
+    content_hash          TEXT,
+    repeated_path         INTEGER NOT NULL DEFAULT 0,
+    repeated_content      INTEGER NOT NULL DEFAULT 0,
+    entered_model_context INTEGER NOT NULL DEFAULT 0,
+    reported_tokens       INTEGER,
+    estimated_tokens      INTEGER,
+    token_quality         TEXT NOT NULL DEFAULT 'unknown',
+    timestamp_utc         TEXT,
+    provenance_json       TEXT,
+    FOREIGN KEY(session_id) REFERENCES forensic_sessions(session_id)
+);
+
+CREATE TABLE IF NOT EXISTS forensic_relationships (
+    relationship_id        TEXT PRIMARY KEY,
+    source                 TEXT NOT NULL,
+    parent_session_id      TEXT,
+    parent_turn_id         TEXT,
+    parent_agent           TEXT,
+    child_session_id       TEXT NOT NULL,
+    child_turn_id          TEXT,
+    child_agent            TEXT NOT NULL,
+    relationship_type      TEXT NOT NULL,
+    evidence_json          TEXT NOT NULL,
+    timestamp_utc          TEXT,
+    confidence             TEXT NOT NULL DEFAULT 'observed',
+    FOREIGN KEY(child_session_id) REFERENCES forensic_sessions(session_id)
+);
+
 CREATE TABLE IF NOT EXISTS forensic_raw_events (
     raw_event_id       TEXT PRIMARY KEY,
     source_id          TEXT NOT NULL,
@@ -251,3 +296,11 @@ CREATE INDEX IF NOT EXISTS idx_forensic_tools_session
     ON forensic_tool_calls (session_id, tool_name);
 CREATE INDEX IF NOT EXISTS idx_forensic_commands_session
     ON forensic_commands (session_id, command);
+CREATE INDEX IF NOT EXISTS idx_forensic_file_access_session
+    ON forensic_file_accesses (session_id, turn_id);
+CREATE INDEX IF NOT EXISTS idx_forensic_file_access_path
+    ON forensic_file_accesses (normalized_path, timestamp_utc);
+CREATE INDEX IF NOT EXISTS idx_forensic_relationship_child
+    ON forensic_relationships (child_session_id, child_turn_id);
+CREATE INDEX IF NOT EXISTS idx_forensic_relationship_parent
+    ON forensic_relationships (parent_session_id, parent_turn_id);

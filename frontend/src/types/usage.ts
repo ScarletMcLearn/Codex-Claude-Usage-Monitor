@@ -202,6 +202,8 @@ export interface ForensicSessionDetail {
   tools: Array<Record<string, unknown>>
   commands: Array<Record<string, unknown>>
   context_blocks: Array<Record<string, unknown>>
+  file_accesses: Array<Record<string, unknown>>
+  relationships: Array<Record<string, unknown>>
 }
 
 export interface ForensicTurnDetail {
@@ -211,6 +213,8 @@ export interface ForensicTurnDetail {
   tools: Array<Record<string, unknown>>
   commands: Array<Record<string, unknown>>
   context_blocks: Array<Record<string, unknown>>
+  file_accesses: Array<Record<string, unknown>>
+  relationships: Array<Record<string, unknown>>
   raw_events: Array<Record<string, unknown>>
 }
 
@@ -218,6 +222,14 @@ export interface ForensicHotspots {
   tools: Array<Record<string, unknown>>
   commands: Array<Record<string, unknown>>
   context: Array<Record<string, unknown>>
+  files: Array<Record<string, unknown>>
+}
+
+export interface PaginatedForensicSessions {
+  items: ForensicSession[]
+  limit: number
+  offset: number
+  has_more: boolean
 }
 
 export function levelForPercent(pct: number | null, quality: DataQuality): UsageLevel {

@@ -255,4 +255,7 @@ def test_claude_real_shape_fixture_parses_usage_and_tools(tmp_path, tmp_data_dir
     assert detail["session"]["total_tokens"] == 120
     assert detail["session"]["cached_tokens"] == 3
     assert detail["tools"][0]["tool_name"] == "Read"
+    assert detail["file_accesses"][0]["path"] == "README.md"
+    assert detail["file_accesses"][0]["access_kind"] == "read"
+    assert detail["relationships"][0]["relationship_type"] == "parent_message"
     assert any(row["role"] == "assistant" for row in detail["turns"])
