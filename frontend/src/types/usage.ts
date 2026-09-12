@@ -127,6 +127,55 @@ export interface UsageReport {
   rows: UsageReportRow[]
 }
 
+export interface ForensicOverview {
+  counts: Record<string, number>
+  agents: Array<{ agent: string; sessions: number; total_tokens: number | null }>
+  expensive_turns: Array<{
+    turn_id: string
+    session_id: string
+    event_type: string | null
+    timestamp_utc: string | null
+    model: string | null
+    input_tokens: number | null
+    output_tokens: number | null
+    total_tokens: number | null
+    token_quality: string
+    user_preview: string | null
+    assistant_preview: string | null
+  }>
+  repeated_context: Array<{
+    content_hash: string
+    occurrences: number
+    chars: number
+    estimated_tokens: number | null
+    first_seen_utc: string | null
+    latest_seen_utc: string | null
+    category: string
+    source: string
+    preview: string | null
+  }>
+  zero_token_counters: {
+    monitor_model_generation_requests: number
+    monitor_completion_requests: number
+    monitor_agent_prompt_invocations: number
+  }
+}
+
+export interface ForensicSession {
+  session_id: string
+  agent: string
+  provider: string | null
+  model: string | null
+  project_path: string | null
+  started_at_utc: string | null
+  ended_at_utc: string | null
+  raw_event_count: number
+  input_tokens: number | null
+  output_tokens: number | null
+  total_tokens: number | null
+  token_quality: string
+}
+
 export function levelForPercent(pct: number | null, quality: DataQuality): UsageLevel {
   if (pct === null || quality === 'unavailable') return 'unknown'
   if (pct >= 100) return 'exhausted'

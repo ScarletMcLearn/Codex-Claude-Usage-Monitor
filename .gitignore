@@ -16,6 +16,9 @@ frontend/.vite/
 *.sqlite3-journal
 *.sqlite3-wal
 *.sqlite3-shm
+exports/
+token-forensics-export/
+token-forensics-*.zip
 
 # Env
 .env

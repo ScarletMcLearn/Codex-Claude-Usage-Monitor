@@ -15,6 +15,7 @@ from ..services.discovery_service import DiscoveryService
 from ..services.forecast_service import ForecastService
 from ..services.history_service import HistoryService
 from ..services.notification_service import NotificationService
+from ..services.forensics_service import ForensicsService
 from ..services.settings_service import SettingsService
 from ..services.usage_service import UsageService
 
@@ -49,6 +50,10 @@ def get_notification_service(request: Request) -> NotificationService:
 
 def get_forecast_service(request: Request) -> ForecastService:
     return request.app.state.forecast_service
+
+
+def get_forensics_service(request: Request) -> ForensicsService:
+    return request.app.state.forensics_service
 
 
 def get_scheduler(request: Request) -> RefreshScheduler:

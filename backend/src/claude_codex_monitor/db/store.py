@@ -407,3 +407,303 @@ class Store:
                 "SELECT * FROM refresh_log ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # -------------------------------------------------------- forensic data
+
+    def upsert_forensic_source(self, row: dict[str, Any]) -> None:
+        now = _iso(datetime.now(UTC))
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO forensic_sources
+                    (source_id, agent, source_type, source_path, parser_version,
+                     first_seen_utc, last_seen_utc, file_size, file_mtime_utc,
+                     checkpoint_offset, events_processed, events_skipped,
+                     malformed_events, last_error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id) DO UPDATE SET
+                    last_seen_utc = excluded.last_seen_utc,
+                    file_size = excluded.file_size,
+                    file_mtime_utc = excluded.file_mtime_utc,
+                    last_error = excluded.last_error
+                """,
+                (
+                    row["source_id"],
+                    row["agent"],
+                    row["source_type"],
+                    row["source_path"],
+                    row["parser_version"],
+                    row.get("first_seen_utc") or now,
+                    row.get("last_seen_utc") or now,
+                    row.get("file_size"),
+                    row.get("file_mtime_utc"),
+                    row.get("checkpoint_offset", 0),
+                    row.get("events_processed", 0),
+                    row.get("events_skipped", 0),
+                    row.get("malformed_events", 0),
+                    row.get("last_error"),
+                ),
+            )
+
+    def update_forensic_source_checkpoint(
+        self,
+        source_id: str,
+        *,
+        checkpoint_offset: int,
+        events_processed: int,
+        events_skipped: int,
+        malformed_events: int,
+        last_error: str | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE forensic_sources
+                SET checkpoint_offset = ?, events_processed = events_processed + ?,
+                    events_skipped = events_skipped + ?, malformed_events = malformed_events + ?,
+                    last_ingested_utc = ?, last_error = ?
+                WHERE source_id = ?
+                """,
+                (
+                    checkpoint_offset,
+                    events_processed,
+                    events_skipped,
+                    malformed_events,
+                    _iso(datetime.now(UTC)),
+                    last_error,
+                    source_id,
+                ),
+            )
+
+    def get_forensic_source(self, source_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM forensic_sources WHERE source_id = ?", (source_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def insert_forensic_rows(
+        self,
+        *,
+        sessions: list[dict[str, Any]],
+        turns: list[dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        commands: list[dict[str, Any]],
+        contexts: list[dict[str, Any]],
+        raw_events: list[dict[str, Any]],
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN")
+            try:
+                for row in sessions:
+                    connection.execute(
+                        """
+                        INSERT INTO forensic_sessions
+                            (session_id, agent, provider, profile_id, model, model_variant,
+                             project_path, repository_path, branch, worktree, started_at_utc,
+                             ended_at_utc, source_id, raw_event_count, input_tokens,
+                             output_tokens, total_tokens, cached_tokens, reasoning_tokens,
+                             token_quality)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(session_id) DO UPDATE SET
+                            ended_at_utc = COALESCE(excluded.ended_at_utc, forensic_sessions.ended_at_utc),
+                            model = COALESCE(excluded.model, forensic_sessions.model),
+                            project_path = COALESCE(excluded.project_path, forensic_sessions.project_path),
+                            repository_path = COALESCE(excluded.repository_path, forensic_sessions.repository_path),
+                            branch = COALESCE(excluded.branch, forensic_sessions.branch),
+                            raw_event_count = forensic_sessions.raw_event_count + excluded.raw_event_count,
+                            input_tokens = COALESCE(excluded.input_tokens, forensic_sessions.input_tokens),
+                            output_tokens = COALESCE(excluded.output_tokens, forensic_sessions.output_tokens),
+                            total_tokens = COALESCE(excluded.total_tokens, forensic_sessions.total_tokens),
+                            cached_tokens = COALESCE(excluded.cached_tokens, forensic_sessions.cached_tokens),
+                            reasoning_tokens = COALESCE(excluded.reasoning_tokens, forensic_sessions.reasoning_tokens),
+                            token_quality = excluded.token_quality
+                        """,
+                        _session_tuple(row),
+                    )
+                for table, rows, columns in (
+                    ("forensic_raw_events", raw_events, _RAW_EVENT_COLUMNS),
+                    ("forensic_turns", turns, _TURN_COLUMNS),
+                    ("forensic_messages", messages, _MESSAGE_COLUMNS),
+                    ("forensic_tool_calls", tools, _TOOL_COLUMNS),
+                    ("forensic_commands", commands, _COMMAND_COLUMNS),
+                    ("forensic_context_blocks", contexts, _CONTEXT_COLUMNS),
+                ):
+                    if not rows:
+                        continue
+                    placeholders = ", ".join("?" for _ in columns)
+                    names = ", ".join(columns)
+                    sql = f"INSERT OR IGNORE INTO {table} ({names}) VALUES ({placeholders})"
+                    connection.executemany(sql, [tuple(row.get(c) for c in columns) for row in rows])
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    def forensic_overview(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            counts = {}
+            for name in (
+                "forensic_sources",
+                "forensic_sessions",
+                "forensic_turns",
+                "forensic_messages",
+                "forensic_tool_calls",
+                "forensic_commands",
+                "forensic_context_blocks",
+                "forensic_raw_events",
+            ):
+                counts[name] = int(connection.execute(f"SELECT COUNT(*) AS n FROM {name}").fetchone()["n"])
+            agents = connection.execute(
+                """
+                SELECT agent, COUNT(*) AS sessions, SUM(COALESCE(total_tokens, 0)) AS total_tokens
+                FROM forensic_sessions GROUP BY agent ORDER BY sessions DESC
+                """
+            ).fetchall()
+            expensive = connection.execute(
+                """
+                SELECT turn_id, session_id, event_type, timestamp_utc, model,
+                       input_tokens, output_tokens, total_tokens, token_quality,
+                       user_preview, assistant_preview
+                FROM forensic_turns
+                ORDER BY COALESCE(total_tokens, 0) DESC, timestamp_utc DESC
+                LIMIT 20
+                """
+            ).fetchall()
+            duplicates = connection.execute(
+                """
+                SELECT content_hash, COUNT(*) AS occurrences, MAX(char_count) AS chars,
+                       MAX(estimated_tokens) AS estimated_tokens,
+                       MIN(first_seen_utc) AS first_seen_utc, MAX(first_seen_utc) AS latest_seen_utc,
+                       MIN(category) AS category, MIN(source) AS source,
+                       SUBSTR(MIN(text), 1, 240) AS preview
+                FROM forensic_context_blocks
+                GROUP BY content_hash
+                HAVING COUNT(*) > 1
+                ORDER BY occurrences DESC, chars DESC
+                LIMIT 20
+                """
+            ).fetchall()
+        return {
+            "counts": counts,
+            "agents": [dict(row) for row in agents],
+            "expensive_turns": [dict(row) for row in expensive],
+            "repeated_context": [dict(row) for row in duplicates],
+            "zero_token_counters": {
+                "monitor_model_generation_requests": 0,
+                "monitor_completion_requests": 0,
+                "monitor_agent_prompt_invocations": 0,
+            },
+        }
+
+    def list_forensic_sessions(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM forensic_sessions
+                ORDER BY COALESCE(started_at_utc, ended_at_utc) DESC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def forensic_session_detail(self, session_id: str, *, limit: int = 100) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            session = connection.execute(
+                "SELECT * FROM forensic_sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            if session is None:
+                return None
+            turns = connection.execute(
+                "SELECT * FROM forensic_turns WHERE session_id = ? ORDER BY turn_index LIMIT ?",
+                (session_id, limit),
+            ).fetchall()
+            tools = connection.execute(
+                "SELECT * FROM forensic_tool_calls WHERE session_id = ? LIMIT ?",
+                (session_id, limit),
+            ).fetchall()
+            commands = connection.execute(
+                "SELECT * FROM forensic_commands WHERE session_id = ? LIMIT ?",
+                (session_id, limit),
+            ).fetchall()
+            contexts = connection.execute(
+                """
+                SELECT block_id, category, source, char_count, byte_count, line_count,
+                       content_hash, estimated_tokens, token_quality, first_seen_utc,
+                       SUBSTR(text, 1, 500) AS preview
+                FROM forensic_context_blocks WHERE session_id = ?
+                ORDER BY char_count DESC LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        return {
+            "session": dict(session),
+            "turns": [dict(row) for row in turns],
+            "tools": [dict(row) for row in tools],
+            "commands": [dict(row) for row in commands],
+            "context_blocks": [dict(row) for row in contexts],
+        }
+
+    def list_forensic_table(self, table: str) -> list[dict[str, Any]]:
+        allowed = {
+            "agents": "SELECT agent, provider, model, COUNT(*) AS sessions, SUM(COALESCE(total_tokens, 0)) AS total_tokens FROM forensic_sessions GROUP BY agent, provider, model",
+            "sessions": "SELECT * FROM forensic_sessions",
+            "turns": "SELECT * FROM forensic_turns",
+            "messages": "SELECT * FROM forensic_messages",
+            "tools": "SELECT * FROM forensic_tool_calls",
+            "commands": "SELECT * FROM forensic_commands",
+            "context-blocks": "SELECT * FROM forensic_context_blocks",
+            "raw-events": "SELECT * FROM forensic_raw_events",
+        }
+        if table not in allowed:
+            raise KeyError(table)
+        with self._connect() as connection:
+            rows = connection.execute(allowed[table]).fetchall()
+        return [dict(row) for row in rows]
+
+
+_RAW_EVENT_COLUMNS = (
+    "raw_event_id", "source_id", "session_id", "event_index", "byte_offset",
+    "timestamp_utc", "event_type", "content_hash", "raw_json",
+)
+_TURN_COLUMNS = (
+    "turn_id", "session_id", "turn_index", "request_id", "response_id", "role",
+    "event_type", "timestamp_utc", "model", "input_tokens", "output_tokens",
+    "total_tokens", "cached_tokens", "cache_write_tokens", "reasoning_tokens",
+    "context_tokens", "duration_ms", "token_quality", "provenance_json",
+    "user_preview", "assistant_preview", "content_hash", "raw_event_id",
+)
+_MESSAGE_COLUMNS = (
+    "message_id", "session_id", "turn_id", "role", "timestamp_utc", "text",
+    "char_count", "byte_count", "line_count", "content_hash", "estimated_tokens",
+    "token_quality", "source_id", "raw_event_id",
+)
+_TOOL_COLUMNS = (
+    "tool_call_id", "session_id", "turn_id", "tool_name", "arguments_json",
+    "output_text", "status", "error", "duration_ms", "output_chars",
+    "output_bytes", "output_lines", "content_hash", "raw_event_id",
+)
+_COMMAND_COLUMNS = (
+    "command_id", "session_id", "turn_id", "command", "cwd", "exit_code",
+    "stdout_text", "stderr_text", "output_chars", "output_bytes",
+    "output_lines", "content_hash", "raw_event_id",
+)
+_CONTEXT_COLUMNS = (
+    "block_id", "session_id", "turn_id", "category", "source", "text",
+    "char_count", "byte_count", "line_count", "content_hash", "estimated_tokens",
+    "token_quality", "first_seen_utc", "raw_event_id",
+)
+
+
+def _session_tuple(row: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        row["session_id"], row["agent"], row.get("provider"), row.get("profile_id"),
+        row.get("model"), row.get("model_variant"), row.get("project_path"),
+        row.get("repository_path"), row.get("branch"), row.get("worktree"),
+        row.get("started_at_utc"), row.get("ended_at_utc"), row["source_id"],
+        row.get("raw_event_count", 0), row.get("input_tokens"), row.get("output_tokens"),
+        row.get("total_tokens"), row.get("cached_tokens"), row.get("reasoning_tokens"),
+        row.get("token_quality", "unknown"),
+    )

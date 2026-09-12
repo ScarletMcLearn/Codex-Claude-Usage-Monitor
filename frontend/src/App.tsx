@@ -10,6 +10,7 @@ import { SummaryCards } from './components/layout/SummaryCards'
 import { UsageReportPanel } from './components/layout/UsageReportPanel'
 import { ProfileCard } from './components/providers/ProfileCard'
 import { HistoryPanel } from './components/history/HistoryPanel'
+import { ForensicsPanel } from './components/forensics/ForensicsPanel'
 import { DiagnosticsDrawer } from './components/diagnostics/DiagnosticsDrawer'
 import { SkeletonCard } from './components/common/SkeletonCard'
 import { EmptyState } from './components/common/EmptyState'
@@ -282,6 +283,8 @@ export default function App() {
         )}
 
         <HistoryPanel profiles={profiles ?? []} />
+
+        <ForensicsPanel />
       </main>
 
       <DiagnosticsDrawer profileKey={diagnosticsProfileKey} onClose={() => setDiagnosticsProfileKey(null)} />

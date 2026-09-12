@@ -6,6 +6,8 @@ import type {
   Settings,
   Summary,
   UsageReport,
+  ForensicOverview,
+  ForensicSession,
   UsageLimit,
 } from '../types/usage'
 
@@ -78,6 +80,20 @@ export const api = {
     request<Settings>('/settings', { method: 'PATCH', body: JSON.stringify(patch) }),
   diagnostics: (profileKey: string) =>
     request<ProfileDiagnostics>(`/diagnostics/${encodeURIComponent(profileKey)}`),
+  forensicOverview: () => request<ForensicOverview>('/forensics/overview'),
+  forensicRefresh: () => request<{
+    sources_scanned: number
+    events_processed: number
+    events_skipped: number
+    malformed_events: number
+    model_generation_requests: number
+  }>('/forensics/refresh', { method: 'POST' }),
+  forensicSessions: () => request<ForensicSession[]>('/forensics/sessions?limit=50'),
+  forensicExport: (exportType: 'summary' | 'full', warningAck = false) =>
+    request<{ path: string; export_type: string; created_at_utc: string }>(
+      `/forensics/export?export_type=${exportType}&warning_ack=${warningAck}`,
+      { method: 'POST' }
+    ),
 }
 
 export { ApiError }

@@ -18,6 +18,9 @@ Everything runs on `127.0.0.1` only. Nothing leaves the machine.
 - Shows current usage per limit window (used/remaining %, reset time, live
   countdown), historical charts, a simple exhaustion forecast, and clearly
   flags stale/unreachable/unauthenticated profiles.
+- Adds a zero-token Token Forensics dashboard that passively ingests local
+  Codex/Claude JSONL, Free-AI logs, and Antigravity snapshots into searchable
+  local evidence tables with raw-event provenance and export controls.
 - Stores history locally in SQLite with configurable retention.
 - Sends Windows toast notifications at 80%/95%/exhaustion/auth-required/
   repeated-failure/reset-completed thresholds, with dedup so you're never

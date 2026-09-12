@@ -28,6 +28,7 @@ from .api.routers import (
     discovery,
     health,
     history,
+    forensics,
     profiles,
     providers,
     summary,
@@ -40,6 +41,7 @@ from .scheduler import RefreshScheduler
 from .services.diagnostics_service import DiagnosticsService
 from .services.discovery_service import DiscoveryService
 from .services.forecast_service import ForecastService
+from .services.forensics_service import ForensicsService
 from .services.history_service import HistoryService
 from .services.notification_service import NotificationService
 from .services.settings_service import SettingsService
@@ -67,6 +69,7 @@ def _wire_services(app: FastAPI) -> None:
     settings_service = SettingsService(store)
     notification_service = NotificationService(store)
     forecast_service = ForecastService(store)
+    forensics_service = ForensicsService(store)
     usage_service = UsageService(
         store, discovery_service, history_service, settings_service, notification_service
     )
@@ -79,6 +82,7 @@ def _wire_services(app: FastAPI) -> None:
     app.state.settings_service = settings_service
     app.state.notification_service = notification_service
     app.state.forecast_service = forecast_service
+    app.state.forensics_service = forensics_service
     app.state.usage_service = usage_service
     app.state.diagnostics_service = diagnostics_service
     app.state.scheduler = scheduler
@@ -111,6 +115,7 @@ def create_app(*, enable_lifespan: bool = True) -> FastAPI:
     app.include_router(profiles.router, prefix="/api")
     app.include_router(discovery.router, prefix="/api")
     app.include_router(history.router, prefix="/api")
+    app.include_router(forensics.router, prefix="/api")
     app.include_router(summary.router, prefix="/api")
     app.include_router(settings_router.router, prefix="/api")
     app.include_router(diagnostics.router, prefix="/api")

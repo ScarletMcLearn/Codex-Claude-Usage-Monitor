@@ -112,3 +112,20 @@ def test_diagnostics_unknown_profile_404(client):
 def test_profile_refresh_unknown_profile_404(client):
     r = client.post("/api/profiles/claude:does-not-exist/refresh")
     assert r.status_code == 404
+
+
+def test_forensics_api_zero_token_empty_state(client):
+    r = client.get("/api/forensics/overview")
+    assert r.status_code == 200
+    assert r.json()["zero_token_counters"]["monitor_model_generation_requests"] == 0
+
+    r = client.post("/api/forensics/refresh")
+    assert r.status_code == 200
+    assert r.json()["model_generation_requests"] == 0
+
+    r = client.get("/api/forensics/sessions")
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+    r = client.post("/api/forensics/export?export_type=full")
+    assert r.status_code == 400
