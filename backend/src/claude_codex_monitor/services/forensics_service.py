@@ -22,7 +22,7 @@ from ..models.profile import sanitize_path
 from ..vendor.antigravity.usage_command import read_usage_snapshot, usage_snapshot_path
 from .token_accounting import TokenCounterSemantics
 
-PARSER_VERSION = "forensics.v2"
+PARSER_VERSION = "forensics.v3"
 _TEXT_KEYS = ("content", "text", "message", "prompt", "output", "response")
 
 
@@ -63,7 +63,12 @@ class ForensicsService:
         return self._store.forensic_session_detail(session_id)
 
     def turn_detail(self, turn_id: str) -> dict[str, Any] | None:
-        return self._store.forensic_turn_detail(turn_id)
+        detail = self._store.forensic_turn_detail(turn_id)
+        if detail is None:
+            return None
+        if not detail.get("messages"):
+            detail["messages"] = _messages_from_raw_events_for_display(detail)
+        return detail
 
     def hotspots(self) -> dict[str, list[dict[str, Any]]]:
         return self._store.forensic_hotspots()
@@ -738,19 +743,44 @@ def _codex_messages(
     blocks: list[tuple[str, str]] = []
     role = str(payload.get("role") or "unknown")
     content = payload.get("content")
+    blocks.extend(_codex_content_blocks(content, role))
+
+    item = payload.get("item")
+    if isinstance(item, dict):
+        item_role = _role_for_codex_item(item)
+        blocks.extend(_codex_content_blocks(item.get("content"), item_role))
+
+    for key in ("summary", "input", "output"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            blocks.append((_role_for_codex_payload(payload, key), value))
+    return _message_rows(blocks, session_id, turn_id, timestamp, source_id, raw_event_id)
+
+
+def _codex_content_blocks(content: Any, role: str) -> list[tuple[str, str]]:
+    blocks: list[tuple[str, str]] = []
     if isinstance(content, str):
-        blocks.append((role, content))
+        if content.strip():
+            blocks.append((role, content))
     elif isinstance(content, list):
         for block in content:
             if isinstance(block, dict):
                 text = block.get("text") or block.get("content")
                 if isinstance(text, str) and text.strip():
                     blocks.append((role, text))
-    for key in ("summary", "input", "output"):
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            blocks.append((_role_for_codex_payload(payload, key), value))
-    return _message_rows(blocks, session_id, turn_id, timestamp, source_id, raw_event_id)
+    return blocks
+
+
+def _role_for_codex_item(item: dict[str, Any]) -> str:
+    role = item.get("role")
+    if isinstance(role, str) and role:
+        return role
+    item_type = str(item.get("type") or "").lower()
+    if "user" in item_type:
+        return "user"
+    if "assistant" in item_type or "agent" in item_type:
+        return "assistant"
+    return "unknown"
 
 
 def _claude_messages(
@@ -809,6 +839,76 @@ def _message_rows(
             "raw_event_id": raw_event_id,
         })
     return rows
+
+
+def _messages_from_raw_events_for_display(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    session = detail.get("session") or {}
+    turn = detail.get("turn") or {}
+    session_id = str(turn.get("session_id") or session.get("session_id") or "")
+    turn_id = str(turn.get("turn_id") or "")
+    rows: list[dict[str, Any]] = []
+    for raw_event in detail.get("raw_events") or []:
+        raw_json = raw_event.get("raw_json")
+        if not isinstance(raw_json, str):
+            continue
+        try:
+            raw = json.loads(raw_json)
+        except json.JSONDecodeError:
+            continue
+        payload = raw.get("payload") if isinstance(raw.get("payload"), dict) else raw
+        blocks = _raw_message_blocks(payload)
+        for row in _message_rows(
+            blocks,
+            session_id,
+            turn_id,
+            raw_event.get("timestamp_utc"),
+            str(raw_event.get("source_id") or ""),
+            str(raw_event.get("raw_event_id") or ""),
+        ):
+            rows.append({
+                "message_id": row["message_id"],
+                "role": row["role"],
+                "timestamp_utc": row["timestamp_utc"],
+                "char_count": row["char_count"],
+                "byte_count": row["byte_count"],
+                "line_count": row["line_count"],
+                "content_hash": row["content_hash"],
+                "estimated_tokens": row["estimated_tokens"],
+                "token_quality": row["token_quality"],
+                "raw_event_id": row["raw_event_id"],
+                "preview": row["text"][:4000],
+            })
+    return rows[:200]
+
+
+def _raw_message_blocks(payload: dict[str, Any]) -> list[tuple[str, str]]:
+    role = str(payload.get("role") or "unknown")
+    blocks = _codex_content_blocks(payload.get("content"), role)
+    message = payload.get("message")
+    if isinstance(message, str) and message.strip():
+        blocks.append((_role_for_payload_type(payload, role), message))
+    elif isinstance(message, dict):
+        message_role = str(message.get("role") or role)
+        blocks.extend(_codex_content_blocks(message.get("content"), message_role))
+
+    item = payload.get("item")
+    if isinstance(item, dict):
+        item_role = _role_for_codex_item(item)
+        blocks.extend(_codex_content_blocks(item.get("content"), item_role))
+
+    content = payload.get("content")
+    if isinstance(content, str) and content.strip() and not blocks:
+        blocks.append((_role_for_payload_type(payload, role), content))
+    return blocks
+
+
+def _role_for_payload_type(payload: dict[str, Any], fallback: str) -> str:
+    payload_type = str(payload.get("type") or "").lower()
+    if "user" in payload_type:
+        return "user"
+    if "agent" in payload_type or "assistant" in payload_type:
+        return "assistant"
+    return fallback
 
 
 def _context_from_messages(

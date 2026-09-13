@@ -1,0 +1,13 @@
+Blocked. Sandbox is read-only and approval policy is `never`, so `.agent/HANDOFF.md` could not be finalized.
+
+Actual state:
+- Existing `.agent/HANDOFF.md` remains `<!-- CODEX-HANDOFF:ACTIVE -->`
+- It contains stale prior-task handoff about model probe commands.
+- Dirty files:
+  - `.agent/HANDOFF.md`
+  - `backend/src/claude_codex_monitor/services/forensics_service.py`
+  - `backend/tests/unit/test_forensics_service.py`
+  - `frontend/src/components/forensics/ForensicsPanel.tsx`
+  - `start-dashboard.ps1`
+
+Attempted write failed: `patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings`

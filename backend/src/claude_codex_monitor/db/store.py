@@ -862,9 +862,18 @@ class Store:
                 """
                 SELECT raw_event_id, source_id, session_id, event_index, byte_offset,
                        timestamp_utc, event_type, content_hash, raw_json
-                FROM forensic_raw_events WHERE raw_event_id = ? LIMIT ?
+                FROM forensic_raw_events
+                WHERE session_id = ?
+                  AND event_index BETWEEN ? AND ?
+                ORDER BY event_index
+                LIMIT ?
                 """,
-                (turn["raw_event_id"], limit),
+                (
+                    turn["session_id"],
+                    max(0, int(turn["turn_index"] or 0) - 8),
+                    int(turn["turn_index"] or 0) + 8,
+                    limit,
+                ),
             ).fetchall()
             files = connection.execute(
                 """

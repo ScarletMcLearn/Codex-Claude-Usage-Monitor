@@ -103,8 +103,13 @@ function Test-FrontendStale {
         Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
     $newestBuilt = Get-ChildItem -Path $DistDir -Recurse -File -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    $newestStatic = Get-ChildItem -Path $StaticDir -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne '.gitkeep' } |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
     if (-not $newestBuilt) { return $true }
+    if (-not $newestStatic) { return $true }
     if ($newestSource -and $newestSource.LastWriteTimeUtc -gt $newestBuilt.LastWriteTimeUtc) { return $true }
+    if ($newestBuilt.LastWriteTimeUtc -gt $newestStatic.LastWriteTimeUtc) { return $true }
     return $false
 }
 

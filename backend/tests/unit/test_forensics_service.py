@@ -144,8 +144,40 @@ def test_codex_real_shape_fixture_parses_semantics(tmp_path, tmp_data_dir, monke
                 ),
                 json.dumps(
                     {
+                        "timestamp": "2026-09-12T00:00:02.500Z",
+                        "ordinal": 4,
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "item_completed",
+                            "item": {
+                                "type": "UserMessage",
+                                "content": [
+                                    {"type": "text", "text": "nested rollout user text"}
+                                ],
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-09-12T00:00:02.750Z",
+                        "ordinal": 5,
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "item_completed",
+                            "item": {
+                                "type": "AgentMessage",
+                                "content": [
+                                    {"type": "text", "text": "nested rollout assistant text"}
+                                ],
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
                         "timestamp": "2026-09-12T00:00:03Z",
-                        "ordinal": 3,
+                        "ordinal": 6,
                         "type": "event_msg",
                         "payload": {
                             "type": "token_count",
@@ -176,12 +208,28 @@ def test_codex_real_shape_fixture_parses_semantics(tmp_path, tmp_data_dir, monke
     detail = service.session_detail("12345678-1234-1234-1234-123456789abc")
 
     assert result["model_generation_requests"] == 0
-    assert result["events_processed"] == 4
+    assert result["events_processed"] == 6
     assert detail is not None
     assert detail["session"]["agent"] == "codex"
     assert detail["session"]["provider"] == "openai"
     assert any(turn["total_tokens"] == 15 for turn in detail["turns"])
     assert detail["tools"][0]["tool_name"] == "exec_command"
+    message_turn_ids = [
+        turn["turn_id"]
+        for turn in detail["turns"]
+        if turn["user_preview"] or turn["assistant_preview"]
+    ]
+    messages = [
+        message["preview"]
+        for turn_id in message_turn_ids
+        for message in service.turn_detail(turn_id)["messages"]
+    ]
+    assert "nested rollout user text" in messages
+    assert "nested rollout assistant text" in messages
+    token_turn_id = next(turn["turn_id"] for turn in detail["turns"] if turn["total_tokens"] == 15)
+    token_messages = [message["preview"] for message in service.turn_detail(token_turn_id)["messages"]]
+    assert "nested rollout user text" in token_messages
+    assert "nested rollout assistant text" in token_messages
 
     second = service.refresh()
     assert second["events_processed"] == 0
