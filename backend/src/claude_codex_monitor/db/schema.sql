@@ -295,6 +295,8 @@ CREATE TABLE IF NOT EXISTS forensic_exports (
 
 CREATE INDEX IF NOT EXISTS idx_forensic_sessions_agent
     ON forensic_sessions (agent, started_at_utc);
+CREATE INDEX IF NOT EXISTS idx_forensic_sessions_source
+    ON forensic_sessions (source_id);
 CREATE INDEX IF NOT EXISTS idx_forensic_turns_session
     ON forensic_turns (session_id, turn_index);
 CREATE INDEX IF NOT EXISTS idx_forensic_messages_hash
@@ -313,3 +315,7 @@ CREATE INDEX IF NOT EXISTS idx_forensic_relationship_child
     ON forensic_relationships (child_session_id, child_turn_id);
 CREATE INDEX IF NOT EXISTS idx_forensic_relationship_parent
     ON forensic_relationships (parent_session_id, parent_turn_id);
+CREATE INDEX IF NOT EXISTS idx_forensic_raw_events_source
+    ON forensic_raw_events (source_id);
+CREATE INDEX IF NOT EXISTS idx_forensic_file_access_source_event
+    ON forensic_file_accesses (source_event_id);

@@ -212,6 +212,7 @@ def test_codex_real_shape_fixture_parses_semantics(tmp_path, tmp_data_dir, monke
     assert detail is not None
     assert detail["session"]["agent"] == "codex"
     assert detail["session"]["provider"] == "openai"
+    assert detail["session"]["raw_event_count"] == 6
     assert any(turn["total_tokens"] == 15 for turn in detail["turns"])
     assert detail["tools"][0]["tool_name"] == "exec_command"
     message_turn_ids = [

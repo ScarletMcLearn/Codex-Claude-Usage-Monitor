@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react'
+import { Fragment } from 'react'
 import { useState } from 'react'
+import type { UseQueryResult } from '@tanstack/react-query'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import type { ForensicSourceDiagnostics, ForensicTurnDetail } from '../../types/usage'
+import type { ForensicSessionDetail, ForensicSourceDiagnostics, ForensicTurn, ForensicTurnDetail } from '../../types/usage'
 
 function tokenText(value: number | null | undefined) {
   return value == null ? 'Unavailable' : value.toLocaleString()
@@ -16,6 +18,13 @@ function textValue(value: unknown) {
 function qualityText(value: unknown) {
   const raw = String(value ?? 'unknown')
   return raw.charAt(0).toUpperCase() + raw.slice(1)
+}
+
+function timestampText(value: string | null | undefined) {
+  if (!value) return 'Unavailable'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
 }
 
 function preview(value: unknown) {
@@ -280,6 +289,7 @@ export function ForensicsPanel() {
           <table className="min-w-full text-left text-sm">
             <thead className="text-xs uppercase text-slate-500">
               <tr>
+                <th className="py-2 pr-4">Timestamp</th>
                 <th className="py-2 pr-4">Agent</th>
                 <th className="py-2 pr-4">Model</th>
                 <th className="py-2 pr-4">Project</th>
@@ -290,18 +300,51 @@ export function ForensicsPanel() {
             </thead>
             <tbody>
               {(sessions.data?.items ?? []).map((row) => (
-                <tr key={row.session_id} className="border-t border-slate-100 dark:border-slate-800">
-                  <td className="py-2 pr-4">
-                    <button className="font-medium text-slate-900 underline-offset-2 hover:underline dark:text-slate-50" onClick={() => { setSessionId(row.session_id); setTurnId(null) }}>
-                      {row.agent}
-                    </button>
-                  </td>
-                  <td className="py-2 pr-4">{row.model ?? 'Unavailable'}</td>
-                  <td className="max-w-sm truncate py-2 pr-4">{row.project_path ?? 'Unavailable'}</td>
-                  <td className="py-2 pr-4">{row.raw_event_count}</td>
-                  <td className="py-2 pr-4">{tokenText(row.total_tokens)}</td>
-                  <td className="py-2 pr-4">{qualityText(row.token_quality)}</td>
-                </tr>
+                <Fragment key={row.session_id}>
+                  <tr className="border-t border-slate-100 dark:border-slate-800">
+                    <td className="whitespace-nowrap py-2 pr-4">{timestampText(row.started_at_utc ?? row.ended_at_utc)}</td>
+                    <td className="py-2 pr-4">
+                      <button
+                        className="font-medium text-slate-900 underline-offset-2 hover:underline dark:text-slate-50"
+                        aria-expanded={sessionId === row.session_id}
+                        onClick={() => { setSessionId((current) => current === row.session_id ? null : row.session_id); setTurnId(null) }}
+                      >
+                        {row.agent}
+                      </button>
+                    </td>
+                    <td className="py-2 pr-4">{row.model ?? 'Unavailable'}</td>
+                    <td className="max-w-sm truncate py-2 pr-4">{row.project_path ?? 'Unavailable'}</td>
+                    <td className="py-2 pr-4">{row.raw_event_count}</td>
+                    <td className="py-2 pr-4">{tokenText(row.total_tokens)}</td>
+                    <td className="py-2 pr-4">{qualityText(row.token_quality)}</td>
+                  </tr>
+                  {sessionId === row.session_id && (
+                    <tr className="border-t border-slate-100 dark:border-slate-800">
+                      <td colSpan={7} className="bg-slate-50/60 p-3 dark:bg-slate-950/20">
+                        {session.isLoading ? (
+                          <p className="text-sm text-slate-500">Loading session evidence...</p>
+                        ) : session.data ? (
+                          <SessionDrillDown
+                            actualDataOnly={actualDataOnly}
+                            rawExpanded={rawExpanded}
+                            sessionData={session.data}
+                            showAllSessionEvents={showAllSessionEvents}
+                            turn={turn}
+                            turnDetail={turnDetail}
+                            turnId={turnId}
+                            visibleFileAccesses={visibleFileAccesses}
+                            visibleSessionTurns={visibleSessionTurns}
+                            onToggleRaw={() => setRawExpanded((value) => !value)}
+                            onToggleShowAllSessionEvents={() => setShowAllSessionEvents((value) => !value)}
+                            onTurnClick={(selectedTurnId) => setTurnId((current) => current === selectedTurnId ? null : selectedTurnId)}
+                          />
+                        ) : session.isError ? (
+                          <p className="text-sm text-red-600">Session evidence unavailable.</p>
+                        ) : null}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -321,81 +364,6 @@ export function ForensicsPanel() {
           </button>
         </div>
       </div>
-
-      {session.data && (
-        <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h3 className="font-semibold text-slate-800 dark:text-slate-100">Session Drill-Down</h3>
-              <p className="mt-1 text-xs text-slate-500">{session.data.session.session_id}</p>
-              {actualDataOnly && (
-                <p className="mt-1 text-xs text-slate-500">
-                  Showing turns with tokens or local text previews.
-                </p>
-              )}
-            </div>
-            <button className="rounded-md border border-slate-300 px-3 py-1 text-sm dark:border-slate-700" onClick={() => setShowAllSessionEvents((value) => !value)}>
-              {showAllSessionEvents ? 'Show evidence only' : 'Show all raw events'}
-            </button>
-          </div>
-          <div className="mt-3 grid gap-2">
-            {visibleSessionTurns.map((row) => (
-              <div key={row.turn_id} className={`rounded-md border ${turnRowClass(row)}`}>
-                <button className="block w-full p-3 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-900" onClick={() => setTurnId((current) => current === row.turn_id ? null : row.turn_id)}>
-                  <div className="flex flex-wrap justify-between gap-2">
-                    <span>
-                      Turn {row.turn_index} · {row.event_type ?? 'event'} · {row.model ?? session.data.session.model ?? 'unknown model'}
-                      {hasLocalMessagePreview(row) ? ' · messages' : ''}
-                    </span>
-                    <span>{tokenText(row.total_tokens)} · {qualityText(row.token_quality)}</span>
-                  </div>
-                  <p className="mt-1 line-clamp-2 text-slate-600 dark:text-slate-300">
-                    {row.user_preview || row.assistant_preview || (row.total_tokens != null ? 'Usage-only record; prompt/output preview is on neighboring message events when exposed.' : 'No local preview exposed')}
-                  </p>
-                </button>
-                {turnId === row.turn_id && (
-                  <div className="border-t border-slate-200 p-3 dark:border-slate-800">
-                    {turn.isLoading ? (
-                      <p className="text-sm text-slate-500">Loading turn evidence...</p>
-                    ) : turnDetail ? (
-                      <TurnEvidence detail={turnDetail} rawExpanded={rawExpanded} onToggleRaw={() => setRawExpanded((value) => !value)} />
-                    ) : turn.isError ? (
-                      <p className="text-sm text-red-600">Turn evidence unavailable.</p>
-                    ) : null}
-                  </div>
-                )}
-              </div>
-            ))}
-            {visibleSessionTurns.length === 0 && (
-              <p className="rounded-md border border-slate-200 p-3 text-sm text-slate-500 dark:border-slate-800">
-                No token-bearing or preview-bearing events in this session. Use "Show all raw events" to inspect metadata.
-              </p>
-            )}
-          </div>
-          <EvidenceList title="File Access">
-            {visibleFileAccesses.map((row, index) => (
-              <button key={index} className="block w-full rounded-md border border-slate-200 p-3 text-left text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900" onClick={() => row.turn_id && setTurnId(String(row.turn_id))}>
-                <div className="font-medium">{textValue(row.path)}</div>
-                <div className="text-xs text-slate-500">
-                  {textValue(row.operation)} · {textValue(row.actual_range)} · chars {textValue(row.characters)} · tokens {tokenText(row.estimated_tokens as number | null)} · Quality {qualityText(row.token_quality)}
-                </div>
-                <div className="text-xs text-slate-500">
-                  repeated path {textValue(row.repeated_path)} · repeated content {textValue(row.repeated_content)}
-                </div>
-              </button>
-            ))}
-            {visibleFileAccesses.length === 0 && <p className="text-sm text-slate-500">No explicit file access evidence.</p>}
-          </EvidenceList>
-          <EvidenceList title="Relationships">
-            {session.data.relationships.map((row, index) => (
-              <pre key={index} className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">
-                {preview(JSON.stringify(row, null, 2))}
-              </pre>
-            ))}
-            {session.data.relationships.length === 0 && <p className="text-sm text-slate-500">No parent/child evidence.</p>}
-          </EvidenceList>
-        </div>
-      )}
 
       <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -424,6 +392,109 @@ function EvidenceList({ title, children }: { title: string; children: ReactNode 
     <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
       <h3 className="font-semibold text-slate-800 dark:text-slate-100">{title}</h3>
       <div className="mt-3 space-y-3">{children}</div>
+    </div>
+  )
+}
+
+function SessionDrillDown({
+  actualDataOnly,
+  rawExpanded,
+  sessionData,
+  showAllSessionEvents,
+  turn,
+  turnDetail,
+  turnId,
+  visibleFileAccesses,
+  visibleSessionTurns,
+  onToggleRaw,
+  onToggleShowAllSessionEvents,
+  onTurnClick,
+}: {
+  actualDataOnly: boolean
+  rawExpanded: boolean
+  sessionData: ForensicSessionDetail
+  showAllSessionEvents: boolean
+  turn: UseQueryResult<ForensicTurnDetail, Error>
+  turnDetail: ForensicTurnDetail | undefined
+  turnId: string | null
+  visibleFileAccesses: Array<Record<string, unknown>>
+  visibleSessionTurns: ForensicTurn[]
+  onToggleRaw: () => void
+  onToggleShowAllSessionEvents: () => void
+  onTurnClick: (turnId: string) => void
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="font-semibold text-slate-800 dark:text-slate-100">Session Drill-Down</h3>
+          <p className="mt-1 text-xs text-slate-500">{sessionData.session.session_id}</p>
+          {actualDataOnly && (
+            <p className="mt-1 text-xs text-slate-500">
+              Showing turns with tokens or local text previews.
+            </p>
+          )}
+        </div>
+        <button className="rounded-md border border-slate-300 px-3 py-1 text-sm dark:border-slate-700" onClick={onToggleShowAllSessionEvents}>
+          {showAllSessionEvents ? 'Show evidence only' : 'Show all raw events'}
+        </button>
+      </div>
+      <div className="mt-3 grid gap-2">
+        {visibleSessionTurns.map((row) => (
+          <div key={row.turn_id} className={`rounded-md border ${turnRowClass(row)}`}>
+            <button className="block w-full p-3 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-900" onClick={() => onTurnClick(row.turn_id)}>
+              <div className="flex flex-wrap justify-between gap-2">
+                <span>
+                  Turn {row.turn_index} · {row.event_type ?? 'event'} · {row.model ?? sessionData.session.model ?? 'unknown model'}
+                  {hasLocalMessagePreview(row) ? ' · messages' : ''}
+                </span>
+                <span>{tokenText(row.total_tokens)} · {qualityText(row.token_quality)}</span>
+              </div>
+              <p className="mt-1 line-clamp-2 text-slate-600 dark:text-slate-300">
+                {row.user_preview || row.assistant_preview || (row.total_tokens != null ? 'Usage-only record; prompt/output preview is on neighboring message events when exposed.' : 'No local preview exposed')}
+              </p>
+            </button>
+            {turnId === row.turn_id && (
+              <div className="border-t border-slate-200 p-3 dark:border-slate-800">
+                {turn.isLoading ? (
+                  <p className="text-sm text-slate-500">Loading turn evidence...</p>
+                ) : turnDetail ? (
+                  <TurnEvidence detail={turnDetail} rawExpanded={rawExpanded} onToggleRaw={onToggleRaw} />
+                ) : turn.isError ? (
+                  <p className="text-sm text-red-600">Turn evidence unavailable.</p>
+                ) : null}
+              </div>
+            )}
+          </div>
+        ))}
+        {visibleSessionTurns.length === 0 && (
+          <p className="rounded-md border border-slate-200 p-3 text-sm text-slate-500 dark:border-slate-800">
+            No token-bearing or preview-bearing events in this session. Use "Show all raw events" to inspect metadata.
+          </p>
+        )}
+      </div>
+      <EvidenceList title="File Access">
+        {visibleFileAccesses.map((row, index) => (
+          <button key={index} className="block w-full rounded-md border border-slate-200 p-3 text-left text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900" onClick={() => row.turn_id && onTurnClick(String(row.turn_id))}>
+            <div className="font-medium">{textValue(row.path)}</div>
+            <div className="text-xs text-slate-500">
+              {textValue(row.operation)} · {textValue(row.actual_range)} · chars {textValue(row.characters)} · tokens {tokenText(row.estimated_tokens as number | null)} · Quality {qualityText(row.token_quality)}
+            </div>
+            <div className="text-xs text-slate-500">
+              repeated path {textValue(row.repeated_path)} · repeated content {textValue(row.repeated_content)}
+            </div>
+          </button>
+        ))}
+        {visibleFileAccesses.length === 0 && <p className="text-sm text-slate-500">No explicit file access evidence.</p>}
+      </EvidenceList>
+      <EvidenceList title="Relationships">
+        {sessionData.relationships.map((row, index) => (
+          <pre key={index} className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">
+            {preview(JSON.stringify(row, null, 2))}
+          </pre>
+        ))}
+        {sessionData.relationships.length === 0 && <p className="text-sm text-slate-500">No parent/child evidence.</p>}
+      </EvidenceList>
     </div>
   )
 }

@@ -15,6 +15,7 @@ import logging
 import random
 
 from .services.discovery_service import DiscoveryService
+from .services.forensics_service import ForensicsService
 from .services.settings_service import SettingsService
 from .services.usage_service import UsageService
 
@@ -32,10 +33,12 @@ class RefreshScheduler:
         discovery_service: DiscoveryService,
         usage_service: UsageService,
         settings_service: SettingsService,
+        forensics_service: ForensicsService | None = None,
     ) -> None:
         self._discovery = discovery_service
         self._usage = usage_service
         self._settings = settings_service
+        self._forensics = forensics_service
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self._stopping = False
@@ -95,6 +98,16 @@ class RefreshScheduler:
             try:
                 await asyncio.to_thread(self._discovery.discover_all)
                 results = await asyncio.to_thread(self._usage.refresh_all)
+                if self._forensics is not None:
+                    try:
+                        forensic_result = await asyncio.to_thread(self._forensics.refresh)
+                        LOGGER.info(
+                            "Forensics refresh scanned %d source(s), processed %d event(s)",
+                            forensic_result.get("sources_scanned", 0),
+                            forensic_result.get("events_processed", 0),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - telemetry ingestion must not stop quota refresh
+                        LOGGER.warning("Forensics refresh failed: %s", exc)
                 self.last_refresh_ok = True
                 self._backoff_seconds = 0
                 LOGGER.info("Refresh-all completed for %d profile(s)", len(results))

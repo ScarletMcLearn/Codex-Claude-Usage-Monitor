@@ -1,41 +1,70 @@
-<!-- CODEX-HANDOFF:COMPLETE -->
+<!-- CODEX-HANDOFF:ACTIVE -->
+
 # Codex Agent Handover
 
 ## Objective
-Send tiny dummy prompt to Codex profile, one Claude profile, Antigravity profile, and Free-AI; verify the monitor can ingest/show actual inputs/outputs afterward.
+Fix monitor not recording local forensic logs after 2026-09-13 05:45:53.
 
 ## Current status
-Complete. All four provider commands returned `ok`. Codex and Antigravity local telemetry contain prompt/output evidence. Free-AI local router log shows successful routed provider calls. Claude `--print` returned `ok`, but no matching normal prompt/output JSONL entry was found in recent Claude profile logs; recent Claude JSONL is monitor `/usage` probe activity.
+Active. User requested live end-to-end probe: call each discovered profile/provider, verify prompt/output appear in forensics sorted newest.
 
 ## Completed work
-- Found commands: `codex` PowerShell function, `claude` PowerShell function, `agy.exe`, `free-ai.ps1`.
-- Help probes saved under `work\probe-*.log`.
-- Free-AI help needs escalation because its launcher writes logs under `H:\Projects\AI\Free-AI\Free-AI\artifacts\logs` outside sandbox.
-- Codex clean retry used temp cwd plus `--ignore-rules`; output `ok`; model/session from log: `gpt-5.5`, `01a09802-2890-7eb1-8d9e-1852ec680e73`; verified prompt/output in matching Codex JSONL.
-- Claude restricted print run output `ok`; no matching `Reply exactly: ok` found in recent `.claude*` JSONL files.
-- Antigravity `--prompt` run output `ok`; verified prompt/output in Antigravity transcript JSONL; model setting line showed Gemini 3.8 Flash (High).
-- Free-AI `run` output `ok`; router log showed successes for `gemini/gemini-3.6-flash` and `cohere/north-mini-code-1-0`.
+Loaded caveman skill per global instructions. Inspected repo root, git status, scheduler, app wiring, forensics router/service, and tests.
+
+## Files changed
+- `.agent/HANDOFF.md`: active progress record.
+- `backend/src/claude_codex_monitor/scheduler.py`: optional `ForensicsService`; scheduler runs forensic refresh after usage refresh and logs/catches forensic failures separately.
+- `backend/src/claude_codex_monitor/app.py`: passes `forensics_service` into scheduler.
+- `backend/tests/unit/test_scheduler.py`: verifies scheduler runs forensics and does not fail quota refresh if forensic scan fails.
+- `backend/src/claude_codex_monitor/services/forensics_service.py`: Codex session id now prefers rollout filename/session id for non-`session_meta` payloads; parser version bumped to v4.
+- `backend/src/claude_codex_monitor/db/store.py`: added source-scoped forensic purge for parser-version reparses so old bad rows do not block corrected rows.
+- `backend/tests/unit/test_forensics_service.py`: asserts Codex real-shape fixture stays grouped into one session.
+- `backend/src/claude_codex_monitor/db/schema.sql`: added source-id/source-event indexes so recent reparse completes.
+- `backend/src/claude_codex_monitor/services/forensics_service.py`: scans active `.claude-*` roots through Claude profile discovery, limits refresh to newest 20 JSONL sources for responsiveness.
+
+## Commands and tests run
+- `Get-Content C:\Users\getra\.codex\skills\caveman\SKILL.md` exit 0.
+- `Get-ChildItem -Name` exit 0.
+- `git status --short` exit 0: existing dirty files in backend/frontend tests/components.
+- `rg ...` targeted searches exit 0.
+- `Get-Content backend\src\claude_codex_monitor\scheduler.py` exit 0.
+- `Get-Content backend\src\claude_codex_monitor\services\forensics_service.py` exit 0, truncated but enough for refresh path.
+- `Get-Content backend\src\claude_codex_monitor\api\routers\forensics.py` exit 0.
+- `Get-Content backend\src\claude_codex_monitor\app.py` exit 0.
+- `uv run pytest tests/unit/test_scheduler.py tests/unit/test_forensics_service.py -q` exit 0 with escalation for uv cache access: 13 passed in 0.83s. Full output: `work\pytest-scheduler-forensics.log`.
+- DB inspection showed latest `reported` Codex row at 2026-09-12T23:10:34Z, but latest `unknown` Codex rows at 2026-09-12T23:55:20Z with one-event ids like `msg_...`; confirms parser grouping bug.
+- `uv run pytest tests/unit/test_forensics_service.py tests/unit/test_scheduler.py -q` exit 0 with escalation: 13 passed in 0.76s. Full output: `work\pytest-forensics-reparse.log`.
+- Real refresh command failed with `sqlite3.OperationalError: database is locked`. Full output: `work\forensics-refresh-v4.log`.
+- After index/source-limit fixes, real refresh succeeded: `sources_scanned=20`, `events_processed=5`; output `work\forensics-refresh-top20.log`.
+- Browser verification: opened `http://127.0.0.1:8787`, clicked Token Forensics, clicked Refresh evidence. Sessions table first row: `13/09/2026, 10:58:48`, `claude`, `claude-sonnet-5`, project `H:\Projects\FullStack\Matchora\1`, `924`, `405`, `Reported`.
 
 ## Current failures or blockers
-- `/api/forensics/refresh` was started after parser version bump and did not return after roughly 4.5 minutes, likely because v3 triggers a full reparse of ~100k events. The client call was stopped with Ctrl+C.
-- Claude print-mode evidence was not found in local JSONL even though CLI output was `ok`.
+No blockers.
 
 ## Decisions and assumptions
-- Dummy prompt: `Reply exactly: ok`.
-- Use non-interactive/print/exec modes only.
-- Store outputs in `work\model-probe-*.log`; report only concise result/status.
-- Avoid dangerous skip-permissions unless provider requires and command is otherwise harmless; prefer restricted/sandbox/no tools.
+Treat "logs" as forensic JSONL ingestion shown by Forensics UI/API. Existing user changes must not be reverted.
 
 ## Exact next steps
-None required unless user wants deeper forensic ingestion/performance work. If asked, investigate making parser-version reparse incremental/bounded before asking user to refresh evidence again.
+No required next steps.
 
 ## Risks and warnings
-- These commands consume quota/tokens.
-- Free-AI/Antigravity may launch child processes and write logs outside workspace.
-- Do not print raw secrets or large raw logs.
+Do not touch existing dirty frontend files unless required. Forensics may scan many JSONL files; keep scheduler resilient.
 
 ## Repository state
-Dirty files include `.agent/HANDOFF.md`, backend parser/test changes, frontend forensics UI changes, `start-dashboard.ps1`, and `work\*.log`.
+Dirty files after this fix include:
+- `M .agent/HANDOFF.md`
+- `M backend/src/claude_codex_monitor/app.py`
+- `M backend/src/claude_codex_monitor/db/schema.sql`
+- `M backend/src/claude_codex_monitor/db/store.py`
+- `M backend/src/claude_codex_monitor/scheduler.py`
+- `M backend/src/claude_codex_monitor/services/forensics_service.py`
+- `M backend/tests/unit/test_forensics_service.py`
+- `?? backend/tests/unit/test_scheduler.py`
+
+Pre-existing dirty files still present:
+- `M backend/tests/api/test_endpoints.py`
+- `M frontend/src/components/forensics/ForensicsPanel.test.tsx`
+- `M frontend/src/components/forensics/ForensicsPanel.tsx`
 
 ## Last updated
-2026-09-13T05:58:00+06:00
+2026-09-13T00:00:00+06:00

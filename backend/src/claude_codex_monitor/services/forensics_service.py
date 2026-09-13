@@ -20,10 +20,12 @@ from ..adapters.free_ai_adapter import credible_repo, free_ai_repo_path, read_us
 from ..db.store import Store
 from ..models.profile import sanitize_path
 from ..vendor.antigravity.usage_command import read_usage_snapshot, usage_snapshot_path
+from ..vendor.claude_statusline import discovery as claude_discovery
 from .token_accounting import TokenCounterSemantics
 
-PARSER_VERSION = "forensics.v3"
+PARSER_VERSION = "forensics.v4"
 _TEXT_KEYS = ("content", "text", "message", "prompt", "output", "response")
+_MAX_JSONL_SOURCES_PER_ROOT = 20
 
 
 class ForensicsService:
@@ -46,6 +48,9 @@ class ForensicsService:
             result["events_processed"] += stats["events_processed"]
             result["events_skipped"] += stats["events_skipped"]
             result["malformed_events"] += stats["malformed_events"]
+        probe_stats = self._ingest_live_probe_logs()
+        result["sources_scanned"] += probe_stats["sources_scanned"]
+        result["events_processed"] += probe_stats["events_processed"]
         result["events_processed"] += self._ingest_free_ai_summary()
         result["events_processed"] += self._ingest_antigravity_snapshot()
         result["finished_at_utc"] = datetime.now(UTC).isoformat()
@@ -134,37 +139,112 @@ class ForensicsService:
         }
 
     def _discover_sources(self) -> list[dict[str, Any]]:
-        candidates: list[tuple[str, Path, str]] = []
         codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
-        claude_home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
-        for root, agent in ((codex_home, "codex"), (claude_home, "claude")):
+        roots: list[tuple[Path, str]] = [(codex_home, "codex")]
+        claude_override = os.environ.get("CLAUDE_CONFIG_DIR")
+        if claude_override:
+            roots.append((Path(claude_override), "claude"))
+        else:
+            try:
+                roots.extend((candidate.config_dir, "claude") for candidate in claude_discovery.discover_profiles())
+            except Exception:
+                roots.append((Path.home() / ".claude", "claude"))
+        sources: list[dict[str, Any]] = []
+        seen_roots: set[tuple[str, str]] = set()
+        for root, agent in roots:
+            root_key = (agent, str(root).lower())
+            if root_key in seen_roots:
+                continue
+            seen_roots.add(root_key)
+            candidates: list[tuple[str, Path, str]] = []
             for sub in ("sessions", "projects", "history"):
                 base = root / sub
                 if base.is_dir():
                     candidates.extend(
                         (agent, p, "jsonl") for p in base.rglob("*.jsonl") if p.is_file()
                     )
-        sources = []
-        for agent, path, source_type in candidates:
+            candidates.sort(key=lambda item: _path_mtime(item[1]), reverse=True)
+            for agent, path, source_type in candidates[:_MAX_JSONL_SOURCES_PER_ROOT]:
+                source = _source_from_path(agent, path, source_type)
+                if source is not None:
+                    sources.append(source)
+        sources.sort(key=lambda source: str(source.get("file_mtime_utc") or ""), reverse=True)
+        return sources
+
+    def _ingest_live_probe_logs(self) -> dict[str, int]:
+        work_dir = _work_dir()
+        summaries = sorted(
+            work_dir.glob("live-probe-*-summary.jsonl"),
+            key=_path_mtime,
+            reverse=True,
+        )
+        sources_scanned = 0
+        events_processed = 0
+        for summary in summaries[:3]:
+            source = _source_from_path("forensics_probe", summary, "live_probe_summary")
+            if source is None:
+                continue
+            current = self._store.get_forensic_source(source["source_id"]) or {}
+            if current.get("parser_version") and current.get("parser_version") != PARSER_VERSION:
+                self._store.delete_forensic_source_data(source["source_id"])
+            self._store.upsert_forensic_source(source)
             try:
-                stat = path.stat()
+                lines = summary.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
                 continue
-            identity = _file_identity(stat)
-            sources.append(
-                {
-                    "source_id": _stable_id(agent, str(path)),
-                    "agent": agent,
-                    "source_type": source_type,
-                    "source_path": str(path),
-                    "parser_version": PARSER_VERSION,
-                    "file_size": stat.st_size,
-                    "file_mtime_utc": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
-                    "source_identity": identity,
-                    "head_fingerprint": _head_fingerprint(path),
+            sessions: dict[str, dict[str, Any]] = {}
+            turns: list[dict[str, Any]] = []
+            messages: list[dict[str, Any]] = []
+            contexts: list[dict[str, Any]] = []
+            raw_events: list[dict[str, Any]] = []
+            for index, line in enumerate(lines):
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(item, dict) or not item.get("marker"):
+                    continue
+                if int(item.get("exit_code") or 0) != 0:
+                    continue
+                output = _probe_output_text(item)
+                if not output:
+                    continue
+                raw = {
+                    "type": "live_probe",
+                    "agent": item.get("kind"),
+                    "label": item.get("label"),
+                    "marker": item.get("marker"),
+                    "log": sanitize_path(str(item.get("log") or "")),
+                    "timestamp": item.get("finished_utc") or item.get("started_utc"),
+                    "prompt": f"Reply exactly: {item['marker']}",
+                    "response": output,
                 }
+                event = _probe_event_bundle(source, raw, index)
+                sessions[event["session"]["session_id"]] = event["session"]
+                turns.append(event["turn"])
+                messages.extend(event["messages"])
+                contexts.extend(event["contexts"])
+                raw_events.append(event["raw_event"])
+            if raw_events:
+                self._store.insert_forensic_rows(
+                    sessions=list(sessions.values()),
+                    turns=turns,
+                    messages=messages,
+                    tools=[],
+                    commands=[],
+                    contexts=contexts,
+                    raw_events=raw_events,
+                )
+            self._store.update_forensic_source_checkpoint(
+                source["source_id"],
+                checkpoint_offset=summary.stat().st_size,
+                events_processed=len(raw_events),
+                events_skipped=max(len(lines) - len(raw_events), 0),
+                malformed_events=0,
             )
-        return sources
+            sources_scanned += 1
+            events_processed += len(raw_events)
+        return {"sources_scanned": sources_scanned, "events_processed": events_processed}
 
     def _ingest_jsonl_source(self, source: dict[str, Any]) -> dict[str, int]:
         current = self._store.get_forensic_source(source["source_id"]) or {}
@@ -173,6 +253,7 @@ class ForensicsService:
         truncation_detected = rotation_detected = replacement_detected = False
         if current.get("parser_version") and current.get("parser_version") != source["parser_version"]:
             reset_reason = "parser_version_changed"
+            self._store.delete_forensic_source_data(source["source_id"])
         elif (
             current.get("head_fingerprint")
             and current.get("head_fingerprint") != source.get("head_fingerprint")
@@ -366,6 +447,158 @@ class ForensicsService:
         return 1
 
 
+def _work_dir() -> Path:
+    cwd = Path.cwd()
+    if cwd.name == "backend":
+        return cwd.parent / "work"
+    return cwd / "work"
+
+
+def _source_from_path(agent: str, path: Path, source_type: str) -> dict[str, Any] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return {
+        "source_id": _stable_id(agent, str(path)),
+        "agent": agent,
+        "source_type": source_type,
+        "source_path": str(path),
+        "parser_version": PARSER_VERSION,
+        "file_size": stat.st_size,
+        "file_mtime_utc": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+        "source_identity": _file_identity(stat),
+        "head_fingerprint": _head_fingerprint(path),
+    }
+
+
+def _path_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _probe_output_text(item: dict[str, Any]) -> str | None:
+    log_path = item.get("log")
+    if not isinstance(log_path, str) or not log_path:
+        return None
+    path = Path(log_path)
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if isinstance(parsed, dict):
+        for key in ("result", "response", "output"):
+            value = parsed.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return text
+
+
+def _probe_event_bundle(source: dict[str, Any], raw: dict[str, Any], index: int) -> dict[str, Any]:
+    raw_json = json.dumps(raw, ensure_ascii=False, sort_keys=True)
+    raw_hash = _sha(raw_json)
+    raw_event_id = _stable_id(source["source_id"], str(index), raw_hash)
+    timestamp = _normalize_ts(str(raw.get("timestamp") or ""))
+    agent = str(raw.get("agent") or "unknown")
+    label = str(raw.get("label") or "default")
+    marker = str(raw.get("marker") or raw_hash)
+    session_id = _stable_id("live_probe", agent, label, marker)
+    turn_id = _stable_id(session_id, "turn", marker)
+    prompt = str(raw.get("prompt") or "")
+    response = str(raw.get("response") or "")
+    messages = []
+    contexts = []
+    for pos, (role, text) in enumerate((("user", prompt), ("assistant", response))):
+        stats = _text_stats(text)
+        messages.append(
+            {
+                "message_id": _stable_id(raw_event_id, "message", str(pos), role, stats["hash"]),
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "role": role,
+                "timestamp_utc": timestamp,
+                "text": text,
+                "char_count": stats["chars"],
+                "byte_count": stats["bytes"],
+                "line_count": stats["lines"],
+                "content_hash": stats["hash"],
+                "estimated_tokens": _estimate_tokens(text),
+                "token_quality": "estimated",
+                "source_id": source["source_id"],
+                "raw_event_id": raw_event_id,
+            }
+        )
+        contexts.append(
+            {
+                "block_id": _stable_id(raw_event_id, "context", str(pos), stats["hash"]),
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "category": _context_category(role),
+                "source": "live_probe",
+                "text": text,
+                "char_count": stats["chars"],
+                "byte_count": stats["bytes"],
+                "line_count": stats["lines"],
+                "content_hash": stats["hash"],
+                "estimated_tokens": _estimate_tokens(text),
+                "token_quality": "estimated",
+                "first_seen_utc": timestamp,
+                "raw_event_id": raw_event_id,
+            }
+        )
+    turn = {
+        "turn_id": turn_id,
+        "session_id": session_id,
+        "turn_index": index,
+        "role": "assistant",
+        "event_type": "live_probe",
+        "timestamp_utc": timestamp,
+        "token_quality": "estimated",
+        "provenance_json": json.dumps(
+            {"source_id": source["source_id"], "parser_version": PARSER_VERSION}
+        ),
+        "user_preview": _preview(prompt),
+        "assistant_preview": _preview(response),
+        "content_hash": raw_hash,
+        "raw_event_id": raw_event_id,
+    }
+    return {
+        "session": {
+            "session_id": session_id,
+            "agent": agent,
+            "provider": _provider_for(agent),
+            "project_path": sanitize_path(str(raw.get("log") or "")),
+            "started_at_utc": timestamp,
+            "ended_at_utc": timestamp,
+            "source_id": source["source_id"],
+            "raw_event_count": 1,
+            "token_quality": "estimated",
+        },
+        "turn": turn,
+        "messages": messages,
+        "contexts": contexts,
+        "raw_event": {
+            "raw_event_id": raw_event_id,
+            "source_id": source["source_id"],
+            "session_id": session_id,
+            "event_index": index,
+            "byte_offset": 0,
+            "timestamp_utc": timestamp,
+            "event_type": "live_probe",
+            "content_hash": raw_hash,
+            "raw_json": raw_json,
+        },
+    }
+
+
 def _normalize_event(
     source: dict[str, Any], raw: dict[str, Any], offset: int, index: int
 ) -> dict[str, Any]:
@@ -501,10 +734,13 @@ def _normalize_codex_event(
     timestamp = _normalize_ts(_first_str(raw, ("timestamp",)))
     event_type = str(raw.get("type") or "event")
     payload_type = str(payload.get("type") or event_type)
+    rollout_session_id = _session_id_from_rollout_path(source["source_path"])
+    payload_session_id = payload.get("session_id")
+    if not payload_session_id and event_type == "session_meta":
+        payload_session_id = payload.get("id")
     session_id = str(
-        payload.get("session_id")
-        or payload.get("id")
-        or _session_id_from_rollout_path(source["source_path"])
+        payload_session_id
+        or rollout_session_id
         or _stable_id("codex", source["source_path"])
     )
     ordinal = _int_or_none(raw.get("ordinal"))

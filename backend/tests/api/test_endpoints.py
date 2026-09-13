@@ -265,8 +265,8 @@ def test_forensics_sessions_multi_page_ordering_and_filters(tmp_data_dir):
             "agent": "codex" if i % 2 else "claude",
             "provider": "openai",
             "model": "m",
-            "started_at_utc": "2026-09-12T00:00:00+00:00",
-            "ended_at_utc": "2026-09-12T00:00:00+00:00",
+            "started_at_utc": f"2026-09-12T00:00:0{i}+00:00",
+            "ended_at_utc": f"2026-09-12T00:00:0{i}+00:00",
             "source_id": "src",
             "raw_event_count": 1,
             "total_tokens": i,
@@ -294,7 +294,7 @@ def test_forensics_sessions_multi_page_ordering_and_filters(tmp_data_dir):
 
     assert [len(page["items"]) for page in pages] == [3, 3, 1]
     assert [page["has_more"] for page in pages] == [True, True, False]
-    assert ids == sorted(ids)
+    assert ids == [f"s{i}" for i in range(6, -1, -1)]
     assert len(ids) == len(set(ids)) == 7
 
     filtered = client.get("/api/forensics/sessions?limit=3&offset=0&agent=codex").json()

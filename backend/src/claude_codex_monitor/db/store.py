@@ -518,6 +518,49 @@ class Store:
             ).fetchone()
         return dict(row) if row else None
 
+    def delete_forensic_source_data(self, source_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN")
+            try:
+                session_subquery = "SELECT session_id FROM forensic_sessions WHERE source_id = ?"
+                raw_event_subquery = "SELECT raw_event_id FROM forensic_raw_events WHERE source_id = ?"
+                connection.execute(
+                    f"DELETE FROM forensic_file_accesses "
+                    f"WHERE source_event_id IN ({raw_event_subquery})",
+                    (source_id,),
+                )
+                connection.execute(
+                    f"DELETE FROM forensic_relationships "
+                    f"WHERE parent_session_id IN ({session_subquery})",
+                    (source_id,),
+                )
+                connection.execute(
+                    f"DELETE FROM forensic_relationships "
+                    f"WHERE child_session_id IN ({session_subquery})",
+                    (source_id,),
+                )
+                for table in (
+                    "forensic_context_blocks",
+                    "forensic_commands",
+                    "forensic_tool_calls",
+                    "forensic_messages",
+                    "forensic_turns",
+                    "forensic_file_accesses",
+                    "forensic_sessions",
+                ):
+                    connection.execute(
+                        f"DELETE FROM {table} WHERE session_id IN ({session_subquery})",
+                        (source_id,),
+                    )
+                connection.execute(
+                    f"DELETE FROM forensic_raw_events WHERE raw_event_id IN ({raw_event_subquery})",
+                    (source_id,),
+                )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
     def forensic_source_diagnostics(self) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(

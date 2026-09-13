@@ -74,7 +74,7 @@ def _wire_services(app: FastAPI) -> None:
         store, discovery_service, history_service, settings_service, notification_service
     )
     diagnostics_service = DiagnosticsService(store, discovery_service)
-    scheduler = RefreshScheduler(discovery_service, usage_service, settings_service)
+    scheduler = RefreshScheduler(discovery_service, usage_service, settings_service, forensics_service)
 
     app.state.store = store
     app.state.discovery_service = discovery_service

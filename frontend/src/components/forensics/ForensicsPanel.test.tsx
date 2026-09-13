@@ -197,12 +197,19 @@ function renderPanel() {
   )
 }
 
+async function openForensics() {
+  fireEvent.click(screen.getByText('Open token forensics'))
+  await screen.findByText('Sessions')
+}
+
 describe('ForensicsPanel', () => {
   it('drills into session and turn evidence including file and relationship rows', async () => {
     renderPanel()
+    await openForensics()
 
     fireEvent.click(await screen.findByText('claude'))
     expect(await screen.findByText('Session Drill-Down')).toBeInTheDocument()
+    expect(screen.getByText('Session Drill-Down').closest('td')?.getAttribute('colspan')).toBe('7')
     expect((await screen.findAllByText('README.md')).length).toBeGreaterThan(0)
     expect(screen.getByText(/parent_message/)).toBeInTheDocument()
 
@@ -212,27 +219,32 @@ describe('ForensicsPanel', () => {
     expect(screen.queryByText(/per_request/)).not.toBeInTheDocument()
     fireEvent.click(screen.getByText('Expand raw provenance'))
     expect(screen.getByText(/per_request/)).toBeInTheDocument()
-    expect(screen.getByText(/hidden/)).toBeInTheDocument()
+    expect(screen.getAllByText(/hidden/).length).toBeGreaterThan(0)
     fireEvent.click(screen.getByText('Collapse raw provenance'))
     expect(screen.queryByText(/per_request/)).not.toBeInTheDocument()
-    expect(screen.getByText('File Hotspots')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Load hotspots'))
+    expect(await screen.findByText('File Hotspots')).toBeInTheDocument()
   })
 
   it('renders filter controls and pagination state', async () => {
     renderPanel()
+    await openForensics()
 
     await waitFor(() => expect(screen.getByText('Sessions')).toBeInTheDocument())
+    expect(screen.getByText('Timestamp')).toBeInTheDocument()
     expect(screen.getByDisplayValue('All agents')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('All qualities')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Reported')).toBeInTheDocument()
     expect(screen.getByText('Offset 0')).toBeInTheDocument()
   })
 
   it('renders deterministic source diagnostics without raw conversation text', async () => {
     renderPanel()
+    await openForensics()
 
     expect(await screen.findByText('Collector Diagnostics')).toBeInTheDocument()
     expect(screen.getByText('Collection mode: Passive local telemetry')).toBeInTheDocument()
     expect(screen.getByText('Model-generation requests by forensic monitor: 0')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Load diagnostics'))
     expect(await screen.findByText('codex-jsonl-v1')).toBeInTheDocument()
     expect(await screen.findByText('claude-jsonl-v1')).toBeInTheDocument()
     expect(await screen.findByText('codex-jsonl-v2')).toBeInTheDocument()
@@ -258,6 +270,7 @@ describe('ForensicsPanel', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
     renderPanel()
+    await openForensics()
 
     fireEvent.click(await screen.findByText('Full forensic export'))
     expect(api.forensicExport).not.toHaveBeenCalled()
@@ -274,6 +287,7 @@ describe('ForensicsPanel', () => {
 
   it('distinguishes unavailable from zero and estimated from reported', async () => {
     renderPanel()
+    await openForensics()
 
     fireEvent.click(await screen.findByText('claude'))
     fireEvent.click(await screen.findByText(/Turn 1/))
